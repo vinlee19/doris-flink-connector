@@ -64,7 +64,9 @@ enum TPrimitiveType {
   FLOAT,
   DOUBLE,
   DATE,
+  DATEV2
   DATETIME,
+  DATETIMEV2
   BINARY,
   DECIMAL,
   // CHAR(n). Currently only supported in UDAs
