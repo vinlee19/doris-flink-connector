@@ -274,6 +274,12 @@ under the License.
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>com.ververica</groupId>
+            <artifactId>flink-sql-connector-tidb-cdc</artifactId>
+            <version>${flink.sql.cdc.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-runtime-web</artifactId>
             <version>${flink.version}</version>
