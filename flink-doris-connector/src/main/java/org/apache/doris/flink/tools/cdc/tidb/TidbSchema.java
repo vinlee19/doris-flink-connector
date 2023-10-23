@@ -14,24 +14,19 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+package org.apache.doris.flink.tools.cdc.tidb;
 
-package org.apache.doris.flink.tools.cdc;
+import org.apache.doris.flink.tools.cdc.SourceSchema;
 
-public enum SourceConnector {
+import java.sql.DatabaseMetaData;
 
-    MYSQL("mysql"),
-    ORACLE("oracle"),
-    POSTGRES("postgres"),
-    SQLSERVER("sqlserver"),
-    TIDB("tidb");
+public class TidbSchema extends SourceSchema {
 
-    public final String connectorName;
-
-    SourceConnector(String connectorName) {
-        this.connectorName = connectorName;
+    public TidbSchema(DatabaseMetaData metaData, String databaseName, String tableName, String tableComment) throws Exception {
+        super(metaData, databaseName, null, tableName, tableComment);
     }
 
-    public String getConnectorName() {
-        return connectorName;
+    public String convertToDorisType(String fieldType, Integer precision, Integer scale){
+        return TidbType.toDorisType(fieldType, precision, scale);
     }
 }

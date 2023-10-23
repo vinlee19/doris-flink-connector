@@ -21,15 +21,13 @@ import org.apache.doris.flink.tools.cdc.mysql.MysqlDatabaseSync;
 import org.apache.doris.flink.tools.cdc.oracle.OracleDatabaseSync;
 import org.apache.doris.flink.tools.cdc.postgres.PostgresDatabaseSync;
 import org.apache.doris.flink.tools.cdc.sqlserver.SqlServerDatabaseSync;
+import org.apache.doris.flink.tools.cdc.tidb.TidbDatabaseSync;
 import org.apache.flink.api.java.utils.MultipleParameterTool;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.StringUtils;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * cdc sync tools
@@ -39,7 +37,8 @@ public class CdcTools {
     private static final String ORACLE_SYNC_DATABASE = "oracle-sync-database";
     private static final String POSTGRES_SYNC_DATABASE = "postgres-sync-database";
     private static final String SQLSERVER_SYNC_DATABASE = "sqlserver-sync-database";
-    private static final List<String> EMPTY_KEYS = Arrays.asList("password");
+    private static final String TIDB_SYNC_DATABASE = "tidb-sync-database";
+    private static final List<String> EMPTY_KEYS = Collections.singletonList("password");
 
     public static void main(String[] args) throws Exception {
         String operation = args[0].toLowerCase();
@@ -57,6 +56,9 @@ public class CdcTools {
                 break;
             case SQLSERVER_SYNC_DATABASE:
                 createSqlServerSyncDatabase(opArgs);
+                break;
+            case TIDB_SYNC_DATABASE:
+                createTidbSyncDatabase(opArgs);
                 break;
             default:
                 System.out.println("Unknown operation " + operation);
@@ -96,6 +98,14 @@ public class CdcTools {
         syncDatabase(params, databaseSync, postgresConfig, "SqlServer");
     }
 
+    private static void createTidbSyncDatabase(String[] opArgs) throws Exception {
+        MultipleParameterTool params = MultipleParameterTool.fromArgs(opArgs);
+        Map<String, String> tidbMap = getConfigMap(params, "tidb-conf");
+        Configuration tidbConfig = Configuration.fromMap(tidbMap);
+        DatabaseSync databaseSync = new TidbDatabaseSync();
+        syncDatabase(params, databaseSync, tidbConfig, "TiDB");
+    }
+
     private static void syncDatabase(MultipleParameterTool params, DatabaseSync databaseSync, Configuration config, String type) throws Exception {
         String jobName = params.get("job-name");
         String database = params.get("database");
@@ -122,7 +132,7 @@ public class CdcTools {
 
     private static Map<String, String> getConfigMap(MultipleParameterTool params, String key) {
         if (!params.has(key)) {
-            return null;
+            return Collections.emptyMap();
         }
 
         Map<String, String> map = new HashMap<>();
@@ -138,7 +148,7 @@ public class CdcTools {
 
             System.err.println(
                     "Invalid " + key + " " + param + ".\n");
-            return null;
+            return Collections.emptyMap();
         }
         return map;
     }
