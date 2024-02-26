@@ -34,6 +34,7 @@ import org.apache.doris.flink.cfg.DorisExecutionOptions;
 import org.apache.doris.flink.cfg.DorisOptions;
 import org.apache.doris.flink.cfg.DorisReadOptions;
 import org.apache.doris.flink.sink.DorisSink;
+import org.apache.doris.flink.sink.writer.WriteMode;
 import org.apache.doris.flink.sink.writer.serializer.JsonDebeziumSchemaSerializer;
 import org.apache.doris.flink.table.DorisConfigOptions;
 import org.slf4j.Logger;
@@ -72,7 +73,7 @@ public abstract class DatabaseSync {
 
     public StreamExecutionEnvironment env;
     private boolean createTableOnly = false;
-    private boolean newSchemaChange;
+    private boolean newSchemaChange = true;
     protected String includingTables;
     protected String excludingTables;
     protected String multiToOneOrigin;
@@ -276,6 +277,9 @@ public abstract class DatabaseSync {
         sinkConfig
                 .getOptional(DorisConfigOptions.SINK_USE_CACHE)
                 .ifPresent(executionBuilder::setUseCache);
+        sinkConfig
+                .getOptional(DorisConfigOptions.SINK_WRITE_MODE)
+                .ifPresent(v -> executionBuilder.setWriteMode(WriteMode.of(v)));
 
         DorisExecutionOptions executionOptions = executionBuilder.build();
         builder.setDorisReadOptions(DorisReadOptions.builder().build())
@@ -362,7 +366,7 @@ public abstract class DatabaseSync {
      * @param tableBuckets the string of tableBuckets, eg:student:10,student_info:20,student.*:30
      * @return The table name and buckets map. The key is table name, the value is buckets.
      */
-    public Map<String, Integer> getTableBuckets(String tableBuckets) {
+    public static Map<String, Integer> getTableBuckets(String tableBuckets) {
         Map<String, Integer> tableBucketsMap = new LinkedHashMap<>();
         String[] tableBucketsArray = tableBuckets.split(",");
         for (String tableBucket : tableBucketsArray) {
