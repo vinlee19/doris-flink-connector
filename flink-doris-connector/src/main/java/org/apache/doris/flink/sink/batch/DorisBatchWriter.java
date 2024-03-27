@@ -111,6 +111,7 @@ public class DorisBatchWriter<IN>
     @Override
     public void write(IN in, Context context) throws IOException, InterruptedException {
         checkFlushException();
+        System.out.println(in);
         writeOneDorisRecord(serializer.serialize(in));
     }
 

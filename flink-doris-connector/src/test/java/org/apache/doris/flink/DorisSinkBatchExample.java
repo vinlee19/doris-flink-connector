@@ -61,10 +61,10 @@ public class DorisSinkBatchExample {
         properties.setProperty("format", "csv");
         DorisOptions.Builder dorisBuilder = DorisOptions.builder();
         dorisBuilder
-                .setFenodes("127.0.0.1:8030")
-                .setTableIdentifier("test.test_flink")
+                .setFenodes("172.21.16.12:28030")
+                .setTableIdentifier("flinktest.test_batch")
                 .setUsername("root")
-                .setPassword("");
+                .setPassword("123456");
         DorisExecutionOptions.Builder executionBuilder = DorisExecutionOptions.builder();
         executionBuilder
                 .setLabelPrefix("label")

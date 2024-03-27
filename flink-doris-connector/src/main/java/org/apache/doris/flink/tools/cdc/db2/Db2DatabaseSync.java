@@ -17,19 +17,23 @@
 
 package org.apache.doris.flink.tools.cdc.db2;
 
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.cdc.connectors.base.options.JdbcSourceOptions;
+import org.apache.flink.cdc.connectors.base.options.SourceOptions;
+import org.apache.flink.cdc.connectors.base.options.StartupOptions;
+import org.apache.flink.cdc.connectors.base.source.jdbc.JdbcIncrementalSource;
+import org.apache.flink.cdc.connectors.db2.Db2Source;
+import org.apache.flink.cdc.connectors.db2.source.Db2SourceBuilder;
+import org.apache.flink.cdc.debezium.DebeziumSourceFunction;
+import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
+import org.apache.flink.cdc.debezium.table.DebeziumOptions;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.util.Preconditions;
 
-import com.ververica.cdc.connectors.base.options.JdbcSourceOptions;
-import com.ververica.cdc.connectors.base.options.SourceOptions;
-import com.ververica.cdc.connectors.db2.Db2Source;
-import com.ververica.cdc.connectors.db2.table.StartupOptions;
-import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
-import com.ververica.cdc.debezium.table.DebeziumOptions;
 import org.apache.doris.flink.catalog.doris.DataModel;
 import org.apache.doris.flink.tools.cdc.DatabaseSync;
 import org.apache.doris.flink.tools.cdc.SourceSchema;
@@ -46,6 +50,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+
+import static org.apache.flink.cdc.connectors.base.options.JdbcSourceOptions.CONNECTION_POOL_SIZE;
+import static org.apache.flink.cdc.connectors.base.options.JdbcSourceOptions.CONNECT_MAX_RETRIES;
+import static org.apache.flink.cdc.connectors.base.options.JdbcSourceOptions.CONNECT_TIMEOUT;
+import static org.apache.flink.cdc.connectors.base.options.SourceOptions.CHUNK_META_GROUP_SIZE;
+import static org.apache.flink.cdc.connectors.base.options.SourceOptions.SCAN_INCREMENTAL_SNAPSHOT_CHUNK_SIZE;
+import static org.apache.flink.cdc.connectors.base.options.SourceOptions.SCAN_SNAPSHOT_FETCH_SIZE;
+import static org.apache.flink.cdc.connectors.base.options.SourceOptions.SPLIT_KEY_EVEN_DISTRIBUTION_FACTOR_LOWER_BOUND;
+import static org.apache.flink.cdc.connectors.base.options.SourceOptions.SPLIT_KEY_EVEN_DISTRIBUTION_FACTOR_UPPER_BOUND;
 
 public class Db2DatabaseSync extends DatabaseSync {
     public static final ConfigOption<Integer> PORT =
@@ -154,19 +167,48 @@ public class Db2DatabaseSync extends DatabaseSync {
         JsonDebeziumDeserializationSchema schema =
                 new JsonDebeziumDeserializationSchema(false, customConverterConfigs);
 
-        SourceFunction<String> db2Source =
-                Db2Source.<String>builder()
-                        .hostname(hostname)
-                        .port(port)
-                        .database(databaseName)
-                        .tableList(tableName)
-                        .username(username)
-                        .password(password)
-                        .debeziumProperties(debeziumProperties)
-                        .startupOptions(startupOptions)
-                        .deserializer(schema)
-                        .build();
-        return env.addSource(db2Source, "Db2 Source");
+        if (config.getBoolean(SourceOptions.SCAN_INCREMENTAL_SNAPSHOT_ENABLED, false)) {
+
+            JdbcIncrementalSource<String> db2IncrementalSource =
+                    Db2SourceBuilder.Db2IncrementalSource.<String>builder()
+                            .hostname(hostname)
+                            .port(port)
+                            .databaseList(databaseName)
+                            .tableList(tableName)
+                            .username(username)
+                            .password(password)
+                            .startupOptions(startupOptions)
+                            .deserializer(schema)
+                            .includeSchemaChanges(true)
+                            .debeziumProperties(debeziumProperties)
+                            .splitSize(config.get(SCAN_INCREMENTAL_SNAPSHOT_CHUNK_SIZE))
+                            .splitMetaGroupSize(config.get(CHUNK_META_GROUP_SIZE))
+                            .fetchSize(config.get(SCAN_SNAPSHOT_FETCH_SIZE))
+                            .connectTimeout(config.get(CONNECT_TIMEOUT))
+                            .connectionPoolSize(config.get(CONNECTION_POOL_SIZE))
+                            .connectMaxRetries(config.get(CONNECT_MAX_RETRIES))
+                            .distributionFactorUpper(
+                                    config.get(SPLIT_KEY_EVEN_DISTRIBUTION_FACTOR_UPPER_BOUND))
+                            .distributionFactorLower(
+                                    config.get(SPLIT_KEY_EVEN_DISTRIBUTION_FACTOR_LOWER_BOUND))
+                            .build();
+            return env.fromSource(
+                    db2IncrementalSource, WatermarkStrategy.noWatermarks(), "Db2 IncrSource");
+        } else {
+            DebeziumSourceFunction<String> db2Source =
+                    Db2Source.<String>builder()
+                            .hostname(hostname)
+                            .port(port)
+                            .database(databaseName)
+                            .tableList(tableName)
+                            .username(username)
+                            .password(password)
+                            .debeziumProperties(debeziumProperties)
+                            .startupOptions(startupOptions)
+                            .deserializer(schema)
+                            .build();
+            return env.addSource(db2Source, "Db2 Source", TypeInformation.of(String.class));
+        }
     }
 
     @Override

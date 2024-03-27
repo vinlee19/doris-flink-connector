@@ -61,8 +61,10 @@ public class JsonDebeziumDataChange extends CdcDataChange {
         this.lineDelimiter = changeContext.getLineDelimiter();
     }
 
+    @Override
     public DorisRecord serialize(String record, JsonNode recordRoot, String op) throws IOException {
         // Filter out table records that are not in tableMapping
+        System.out.println(record);
         Map<String, String> tableMapping = changeContext.getTableMapping();
         String cdcTableIdentifier = JsonDebeziumChangeUtils.getCdcTableIdentifier(recordRoot);
         String dorisTableIdentifier =

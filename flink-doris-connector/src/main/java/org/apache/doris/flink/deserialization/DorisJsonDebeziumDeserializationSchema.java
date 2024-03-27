@@ -19,6 +19,7 @@ package org.apache.doris.flink.deserialization;
 
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.cdc.debezium.DebeziumDeserializationSchema;
 import org.apache.flink.util.Collector;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -31,7 +32,6 @@ import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.data.Field;
 import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.data.Schema;
 import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.data.Struct;
 import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.source.SourceRecord;
-import com.ververica.cdc.debezium.DebeziumDeserializationSchema;
 import org.apache.doris.flink.exception.DorisException;
 
 import java.math.BigDecimal;
@@ -57,6 +57,8 @@ public class DorisJsonDebeziumDeserializationSchema
             throws Exception {
         Schema schema = sourceRecord.valueSchema();
         Object value = sourceRecord.value();
+        System.out.println(sourceRecord.valueSchema().toString());
+        System.out.println(sourceRecord.value().toString());
         JsonNode jsonValue = convertToJson(schema, value);
         byte[] bytes = objectMapper.writeValueAsString(jsonValue).getBytes(StandardCharsets.UTF_8);
         collector.collect(new String(bytes));

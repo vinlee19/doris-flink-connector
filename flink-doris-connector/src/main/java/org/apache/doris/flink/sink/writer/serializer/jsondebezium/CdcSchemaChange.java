@@ -29,11 +29,23 @@ import java.io.IOException;
  */
 public abstract class CdcSchemaChange implements ChangeEvent {
 
-    protected abstract String extractDatabase(JsonNode record);
+    protected String extractDatabase(JsonNode record) {
+        System.out.println(record);
+        return null;
+    }
 
-    protected abstract String extractTable(JsonNode record);
+    protected String extractTable(JsonNode record) {
+        System.out.println(record);
+        return null;
+    }
 
-    public abstract boolean schemaChange(JsonNode recordRoot) throws IOException;
+    public boolean schemaChange(JsonNode recordRoot) throws IOException {
+        System.out.println(recordRoot);
+        return true;
+    }
 
-    protected abstract String getCdcTableIdentifier(JsonNode record);
+    protected String getCdcTableIdentifier(JsonNode record) {
+        System.out.println(record);
+        return null;
+    }
 }

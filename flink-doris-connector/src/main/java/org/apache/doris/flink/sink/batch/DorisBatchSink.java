@@ -47,14 +47,8 @@ public class DorisBatchSink<IN> implements Sink<IN> {
 
     @Override
     public SinkWriter<IN> createWriter(InitContext initContext) throws IOException {
-        DorisBatchWriter<IN> dorisBatchWriter =
-                new DorisBatchWriter<IN>(
-                        initContext,
-                        serializer,
-                        dorisOptions,
-                        dorisReadOptions,
-                        dorisExecutionOptions);
-        return dorisBatchWriter;
+        return new DorisBatchWriter<IN>(
+                initContext, serializer, dorisOptions, dorisReadOptions, dorisExecutionOptions);
     }
 
     public static <IN> DorisBatchSink.Builder<IN> builder() {

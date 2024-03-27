@@ -43,40 +43,44 @@ public class CdcSqlServerSyncDatabaseCase {
         //  Configuration configuration = Configuration.fromMap(flinkMap);
         //  env.configure(configuration);
 
-        String database = "db2";
+        String database = "mssql_cdc";
         String tablePrefix = "";
         String tableSuffix = "";
         Map<String, String> sourceConfig = new HashMap<>();
-        sourceConfig.put("database-name", "CDC_DB");
-        sourceConfig.put("schema-name", "dbo");
-        sourceConfig.put("hostname", "127.0.0.1");
-        sourceConfig.put("port", "1433");
+        sourceConfig.put("database-name", "testdb");
+        sourceConfig.put("schema-name", "test_cdc");
+        sourceConfig.put("hostname", "172.21.16.12");
+        sourceConfig.put("port", "21433");
         sourceConfig.put("username", "sa");
-        sourceConfig.put("password", "Passw@rd");
+        sourceConfig.put("password", "123456#qwQ");
         // sourceConfig.put("debezium.database.tablename.case.insensitive","false");
-        // sourceConfig.put("scan.incremental.snapshot.enabled","true");
-        // sourceConfig.put("debezium.include.schema.changes","false");
+        sourceConfig.put("scan.incremental.snapshot.enabled", "false");
+        //        sourceConfig.put("debezium.log.mining.strategy", "online_catalog");
+        //        sourceConfig.put("debezium.log.mining.continuous.mine", "true");
+        sourceConfig.put("debezium.include.schema.changes", "true");
+        sourceConfig.put("debezium.database.history.store.only.captured.tables.ddl", "true");
 
         Configuration config = Configuration.fromMap(sourceConfig);
 
         Map<String, String> sinkConfig = new HashMap<>();
-        sinkConfig.put("fenodes", "10.20.30.1:8030");
+        sinkConfig.put("fenodes", "172.21.16.12:28030");
         // sinkConfig.put("benodes","10.20.30.1:8040, 10.20.30.2:8040, 10.20.30.3:8040");
         sinkConfig.put("username", "root");
-        sinkConfig.put("password", "");
-        sinkConfig.put("jdbc-url", "jdbc:mysql://10.20.30.1:9030");
+        sinkConfig.put("password", "123456");
+        sinkConfig.put("jdbc-url", "jdbc:mysql://172.21.16.12:29030");
         sinkConfig.put("sink.label-prefix", UUID.randomUUID().toString());
         Configuration sinkConf = Configuration.fromMap(sinkConfig);
 
         Map<String, String> tableConfig = new HashMap<>();
         tableConfig.put("replication_num", "1");
         tableConfig.put("table-buckets", "tbl1:10,tbl2:20,a.*:30,b.*:40,.*:50");
-        String includingTables = "a_.*|b_.*|c";
+        String includingTables = "test.*";
         String excludingTables = "";
-        String multiToOneOrigin = "a_.*|b_.*";
-        String multiToOneTarget = "a|b";
+        String multiToOneOrigin = "";
+        String multiToOneTarget = "";
         boolean ignoreDefaultValue = false;
-        boolean useNewSchemaChange = false;
+        boolean useNewSchemaChange = true;
+        boolean ignoreIncompatible = false;
         DatabaseSync databaseSync = new SqlServerDatabaseSync();
         databaseSync
                 .setEnv(env)
@@ -93,6 +97,7 @@ public class CdcSqlServerSyncDatabaseCase {
                 .setTableConfig(tableConfig)
                 .setCreateTableOnly(false)
                 .setNewSchemaChange(useNewSchemaChange)
+                .setSingleSink(true)
                 .create();
         databaseSync.build();
         env.execute(String.format("SqlServer-Doris Database Sync: %s", database));

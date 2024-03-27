@@ -86,6 +86,7 @@ public class Db2Type {
                         "%s(%s)", DorisType.DATETIME_V2, Math.min(scale == null ? 0 : scale, 6));
             case VARGRAPHIC:
             case GRAPHIC:
+            case XML:
                 return DorisType.STRING;
             default:
                 throw new UnsupportedOperationException("Unsupported DB2 Type: " + db2Type);
