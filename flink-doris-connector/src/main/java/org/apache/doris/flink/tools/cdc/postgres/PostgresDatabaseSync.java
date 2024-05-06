@@ -99,26 +99,39 @@ public class PostgresDatabaseSync extends DatabaseSync {
     public List<SourceSchema> getSchemaList() throws Exception {
         String databaseName = config.get(PostgresSourceOptions.DATABASE_NAME);
         String schemaName = config.get(PostgresSourceOptions.SCHEMA_NAME);
+
         List<SourceSchema> schemaList = new ArrayList<>();
         LOG.info("database-name {}, schema-name {}", databaseName, schemaName);
         try (Connection conn = getConnection()) {
             DatabaseMetaData metaData = conn.getMetaData();
-            try (ResultSet tables =
-                    metaData.getTables(databaseName, schemaName, "%", new String[] {"TABLE"})) {
-                while (tables.next()) {
-                    String tableName = tables.getString("TABLE_NAME");
-                    String tableComment = tables.getString("REMARKS");
-                    if (!isSyncNeeded(tableName)) {
-                        continue;
+            try (ResultSet schemas = metaData.getSchemas(); ) {
+                while (schemas.next()) {
+                    String remoteSchema = schemas.getString("TABLE_SCHEM");
+                    if (remoteSchema.matches(schemaName)) {
+                        try (ResultSet tables =
+                                metaData.getTables(
+                                        databaseName, remoteSchema, "%", new String[] {"TABLE"})) {
+                            while (tables.next()) {
+                                String tableName = tables.getString("TABLE_NAME");
+                                String tableComment = tables.getString("REMARKS");
+                                if (!isSyncNeeded(tableName)) {
+                                    continue;
+                                }
+                                SourceSchema sourceSchema =
+                                        new PostgresSchema(
+                                                metaData,
+                                                databaseName,
+                                                remoteSchema,
+                                                tableName,
+                                                tableComment);
+                                sourceSchema.setModel(
+                                        !sourceSchema.primaryKeys.isEmpty()
+                                                ? DataModel.UNIQUE
+                                                : DataModel.DUPLICATE);
+                                schemaList.add(sourceSchema);
+                            }
+                        }
                     }
-                    SourceSchema sourceSchema =
-                            new PostgresSchema(
-                                    metaData, databaseName, schemaName, tableName, tableComment);
-                    sourceSchema.setModel(
-                            sourceSchema.primaryKeys.size() > 0
-                                    ? DataModel.UNIQUE
-                                    : DataModel.DUPLICATE);
-                    schemaList.add(sourceSchema);
                 }
             }
         }
@@ -221,7 +234,6 @@ public class PostgresDatabaseSync extends DatabaseSync {
 
     @Override
     public String getTableListPrefix() {
-        String schemaName = config.get(PostgresSourceOptions.SCHEMA_NAME);
-        return schemaName;
+        return config.get(PostgresSourceOptions.SCHEMA_NAME);
     }
 }

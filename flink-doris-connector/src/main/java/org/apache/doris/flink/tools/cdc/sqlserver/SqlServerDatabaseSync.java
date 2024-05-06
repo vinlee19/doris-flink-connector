@@ -22,6 +22,7 @@ import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Preconditions;
 
+import com.google.common.collect.ImmutableSet;
 import com.ververica.cdc.connectors.base.options.JdbcSourceOptions;
 import com.ververica.cdc.connectors.base.options.SourceOptions;
 import com.ververica.cdc.connectors.base.options.StartupOptions;
@@ -50,6 +51,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import static com.ververica.cdc.connectors.base.options.JdbcSourceOptions.CONNECTION_POOL_SIZE;
 import static com.ververica.cdc.connectors.base.options.JdbcSourceOptions.CONNECT_MAX_RETRIES;
@@ -64,6 +66,23 @@ public class SqlServerDatabaseSync extends DatabaseSync {
     private static final Logger LOG = LoggerFactory.getLogger(SqlServerDatabaseSync.class);
     private static final String JDBC_URL = "jdbc:sqlserver://%s:%d;database=%s";
     private static final String PORT = "port";
+
+    protected Set<String> getFilterInternalDatabases() {
+        return ImmutableSet.<String>builder()
+                .add("cdc")
+                .add("db_accessadmin")
+                .add("db_backupoperator")
+                .add("db_datareader")
+                .add("db_datawriter")
+                .add("db_ddladmin")
+                .add("db_denydatareader")
+                .add("db_denydatawriter")
+                .add("db_owner")
+                .add("db_securityadmin")
+                .add("INFORMATION_SCHEMA")
+                .add("sys")
+                .build();
+    }
 
     public SqlServerDatabaseSync() throws SQLException {
         super();
@@ -101,22 +120,38 @@ public class SqlServerDatabaseSync extends DatabaseSync {
         LOG.info("database-name {}, schema-name {}", databaseName, schemaName);
         try (Connection conn = getConnection()) {
             DatabaseMetaData metaData = conn.getMetaData();
-            try (ResultSet tables =
-                    metaData.getTables(databaseName, schemaName, "%", new String[] {"TABLE"})) {
-                while (tables.next()) {
-                    String tableName = tables.getString("TABLE_NAME");
-                    String tableComment = tables.getString("REMARKS");
-                    if (!isSyncNeeded(tableName)) {
-                        continue;
+            ResultSet schemas = metaData.getSchemas();
+            while (schemas.next()) {
+                String remoteSchema = schemas.getString("TABLE_SCHEM");
+                if (getFilterInternalDatabases().contains(remoteSchema)) {
+                    continue;
+                }
+
+                if (remoteSchema.matches(schemaName)) {
+                    System.out.println(remoteSchema);
+                    try (ResultSet tables =
+                            metaData.getTables(
+                                    databaseName, remoteSchema, "%", new String[] {"TABLE"})) {
+                        while (tables.next()) {
+                            String tableName = tables.getString("TABLE_NAME");
+                            String tableComment = tables.getString("REMARKS");
+                            if (!isSyncNeeded(tableName)) {
+                                continue;
+                            }
+                            SourceSchema sourceSchema =
+                                    new SqlServerSchema(
+                                            metaData,
+                                            databaseName,
+                                            remoteSchema,
+                                            tableName,
+                                            tableComment);
+                            sourceSchema.setModel(
+                                    !sourceSchema.primaryKeys.isEmpty()
+                                            ? DataModel.UNIQUE
+                                            : DataModel.DUPLICATE);
+                            schemaList.add(sourceSchema);
+                        }
                     }
-                    SourceSchema sourceSchema =
-                            new SqlServerSchema(
-                                    metaData, databaseName, schemaName, tableName, tableComment);
-                    sourceSchema.setModel(
-                            !sourceSchema.primaryKeys.isEmpty()
-                                    ? DataModel.UNIQUE
-                                    : DataModel.DUPLICATE);
-                    schemaList.add(sourceSchema);
                 }
             }
         }

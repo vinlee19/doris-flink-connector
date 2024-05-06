@@ -43,16 +43,16 @@ public class CdcPostgresSyncDatabaseCase {
         // Configuration configuration = Configuration.fromMap(flinkMap);
         // env.configure(configuration);
 
-        String database = "db2";
+        String database = "pg_cdc";
         String tablePrefix = "";
         String tableSuffix = "";
         Map<String, String> sourceConfig = new HashMap<>();
-        sourceConfig.put("database-name", "postgres");
-        sourceConfig.put("schema-name", "public");
-        sourceConfig.put("slot.name", "test");
+        sourceConfig.put("database-name", "test_cdc");
+        sourceConfig.put("schema-name", "pgmulti.*");
+        sourceConfig.put("slot.name", "test_cdc");
         sourceConfig.put("decoding.plugin.name", "pgoutput");
-        sourceConfig.put("hostname", "127.0.0.1");
-        sourceConfig.put("port", "5432");
+        sourceConfig.put("hostname", "172.21.16.12");
+        sourceConfig.put("port", "25432");
         sourceConfig.put("username", "postgres");
         sourceConfig.put("password", "123456");
         // sourceConfig.put("debezium.database.tablename.case.insensitive","false");
@@ -62,23 +62,24 @@ public class CdcPostgresSyncDatabaseCase {
         Configuration config = Configuration.fromMap(sourceConfig);
 
         Map<String, String> sinkConfig = new HashMap<>();
-        sinkConfig.put("fenodes", "10.20.30.1:8030");
+        sinkConfig.put("fenodes", "172.21.16.12:28030");
         // sinkConfig.put("benodes","10.20.30.1:8040, 10.20.30.2:8040, 10.20.30.3:8040");
         sinkConfig.put("username", "root");
-        sinkConfig.put("password", "");
-        sinkConfig.put("jdbc-url", "jdbc:mysql://10.20.30.1:9030");
+        sinkConfig.put("password", "123456");
+        sinkConfig.put("jdbc-url", "jdbc:mysql://172.21.16.12:29030");
         sinkConfig.put("sink.label-prefix", UUID.randomUUID().toString());
         Configuration sinkConf = Configuration.fromMap(sinkConfig);
 
         Map<String, String> tableConfig = new HashMap<>();
         tableConfig.put("replication_num", "1");
         tableConfig.put("table-buckets", "tbl1:10,tbl2:20,a.*:30,b.*:40,.*:50");
-        String includingTables = "a_.*|b_.*|c";
+        String includingTables = ".*";
         String excludingTables = "";
         String multiToOneOrigin = "a_.*|b_.*";
         String multiToOneTarget = "a|b";
         boolean ignoreDefaultValue = false;
         boolean useNewSchemaChange = false;
+        boolean mergeSameSchema = false;
         DatabaseSync databaseSync = new PostgresDatabaseSync();
         databaseSync
                 .setEnv(env)
