@@ -82,7 +82,7 @@ public abstract class DatabaseSync {
     protected String tablePrefix;
     protected String tableSuffix;
     protected boolean singleSink;
-    protected boolean mergeSameSchema = true;
+    protected boolean mergeSameSchema;
     private final Map<String, String> tableMapping = new HashMap<>();
 
     public abstract void registerDriver() throws SQLException;
@@ -540,7 +540,7 @@ public abstract class DatabaseSync {
         private final boolean mergeSameSchema;
 
         TableNameConverter() {
-            this("", "", true);
+            this("", "", false);
         }
 
         TableNameConverter(String prefix, String suffix, boolean mergeSameSchema) {
