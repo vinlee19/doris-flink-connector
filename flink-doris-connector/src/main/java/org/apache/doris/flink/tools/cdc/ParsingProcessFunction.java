@@ -21,6 +21,7 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
+import org.apache.flink.util.StringUtils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,15 +47,22 @@ public class ParsingProcessFunction extends ProcessFunction<String, Void> {
     public void processElement(
             String record, ProcessFunction<String, Void>.Context context, Collector<Void> collector)
             throws Exception {
-        String tableName = getRecordTableName(record);
-        String dorisName = getDorisName(record, tableName);
+        String dorisName = getDorisTableName(record);
         context.output(getRecordOutputTag(dorisName), record);
     }
 
-    private String getDorisName(String record, String tableName) throws Exception {
-        if (converter.isMergeSameSchema()) {
+    private String getDorisTableName(String record) throws Exception {
+        String tableName = getRecordTableName(record);
+        if (!converter.isMergeSameSchema()) {
             String databaseName = getRecordDatabaseName(record);
-            return converter.convert(databaseName + "_" + tableName);
+            String schemaName = getRecordSchemaName(record);
+            StringBuilder builder = new StringBuilder();
+            builder.append(databaseName).append("_");
+            if (!StringUtils.isNullOrWhitespaceOnly(schemaName)) {
+                builder.append(schemaName).append("_");
+            }
+            builder.append(tableName);
+            return converter.convert(builder.toString());
         } else {
             return converter.convert(tableName);
         }
@@ -68,6 +76,11 @@ public class ParsingProcessFunction extends ProcessFunction<String, Void> {
     protected String getRecordDatabaseName(String record) throws Exception {
         JsonNode recordRoot = objectMapper.readValue(record, JsonNode.class);
         return extractJsonNode(recordRoot.get("source"), "db");
+    }
+
+    protected String getRecordSchemaName(String record) throws Exception {
+        JsonNode recordRoot = objectMapper.readValue(record, JsonNode.class);
+        return extractJsonNode(recordRoot.get("source"), "schema");
     }
 
     protected String extractJsonNode(JsonNode record, String key) {

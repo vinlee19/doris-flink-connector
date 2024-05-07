@@ -106,6 +106,10 @@ public abstract class SourceSchema {
         return tableName;
     }
 
+    public String getSchemaName() {
+        return schemaName;
+    }
+
     public Map<String, FieldSchema> getFields() {
         return fields;
     }

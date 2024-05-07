@@ -82,7 +82,7 @@ public abstract class DatabaseSync {
     protected String tablePrefix;
     protected String tableSuffix;
     protected boolean singleSink;
-    protected boolean mergeSameSchema;
+    protected boolean mergeSameSchema = true;
     private final Map<String, String> tableMapping = new HashMap<>();
 
     public abstract void registerDriver() throws SQLException;
@@ -144,13 +144,9 @@ public abstract class DatabaseSync {
                 LOG.info("database {} not exist, created", targetDb);
                 dorisSystem.createDatabase(targetDb);
             }
-            String dorisTable;
-            if (mergeSameSchema) {
-                dorisTable =
-                        converter.convert(schema.getDatabaseName() + "_" + schema.getTableName());
-            } else {
-                dorisTable = converter.convert(schema.getTableName());
-            }
+
+            //
+            String dorisTable = convertSourceTable(schema);
 
             // Calculate the mapping relationship between upstream and downstream tables
             tableMapping.put(
@@ -334,6 +330,22 @@ public abstract class DatabaseSync {
                 .setTargetTablePrefix(tablePrefix)
                 .setTargetTableSuffix(tableSuffix)
                 .build();
+    }
+
+    protected String convertSourceTable(SourceSchema schema) {
+        String dorisTable;
+        if (!mergeSameSchema) {
+            StringBuilder builder = new StringBuilder();
+            builder.append(schema.getDatabaseName()).append("_");
+            if (!StringUtils.isNullOrWhitespaceOnly(schema.getSchemaName())) {
+                builder.append(schema.getSchemaName()).append("_");
+            }
+            builder.append(schema.getTableName());
+            dorisTable = converter.convert(builder.toString());
+        } else {
+            dorisTable = converter.convert(schema.getTableName());
+        }
+        return dorisTable;
     }
 
     /** Filter table that need to be synchronized. */
@@ -540,7 +552,7 @@ public abstract class DatabaseSync {
         private final boolean mergeSameSchema;
 
         TableNameConverter() {
-            this("", "", false);
+            this("", "", true);
         }
 
         TableNameConverter(String prefix, String suffix, boolean mergeSameSchema) {
