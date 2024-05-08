@@ -112,33 +112,22 @@ public class OracleDatabaseSync extends DatabaseSync {
         LOG.info("database-name {}, schema-name {}", databaseName, schemaName);
         try (Connection conn = getConnection()) {
             DatabaseMetaData metaData = conn.getMetaData();
-            ResultSet schemas = metaData.getSchemas();
-            while (schemas.next()) {
-                String remoteSchema = schemas.getString("TABLE_SCHEM");
-                if (remoteSchema.matches(schemaName)) {
-                    try (ResultSet tables =
-                            metaData.getTables(
-                                    databaseName, remoteSchema, "%", new String[] {"TABLE"})) {
-                        while (tables.next()) {
-                            String tableName = tables.getString("TABLE_NAME");
-                            String tableComment = tables.getString("REMARKS");
-                            if (!isSyncNeeded(tableName)) {
-                                continue;
-                            }
-                            SourceSchema sourceSchema =
-                                    new OracleSchema(
-                                            metaData,
-                                            databaseName,
-                                            remoteSchema,
-                                            tableName,
-                                            tableComment);
-                            sourceSchema.setModel(
-                                    !sourceSchema.primaryKeys.isEmpty()
-                                            ? DataModel.UNIQUE
-                                            : DataModel.DUPLICATE);
-                            schemaList.add(sourceSchema);
-                        }
+            try (ResultSet tables =
+                    metaData.getTables(databaseName, schemaName, "%", new String[] {"TABLE"})) {
+                while (tables.next()) {
+                    String tableName = tables.getString("TABLE_NAME");
+                    String tableComment = tables.getString("REMARKS");
+                    if (!isSyncNeeded(tableName)) {
+                        continue;
                     }
+                    SourceSchema sourceSchema =
+                            new OracleSchema(
+                                    metaData, databaseName, schemaName, tableName, tableComment);
+                    sourceSchema.setModel(
+                            !sourceSchema.primaryKeys.isEmpty()
+                                    ? DataModel.UNIQUE
+                                    : DataModel.DUPLICATE);
+                    schemaList.add(sourceSchema);
                 }
             }
         }
