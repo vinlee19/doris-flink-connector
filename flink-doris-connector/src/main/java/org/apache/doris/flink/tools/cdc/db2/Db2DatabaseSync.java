@@ -27,10 +27,13 @@ import com.ververica.cdc.connectors.base.options.JdbcSourceOptions;
 import com.ververica.cdc.connectors.base.options.SourceOptions;
 import com.ververica.cdc.connectors.db2.Db2Source;
 import com.ververica.cdc.connectors.db2.table.StartupOptions;
+import com.ververica.cdc.connectors.shaded.org.apache.kafka.connect.json.JsonConverterConfig;
+import com.ververica.cdc.debezium.DebeziumDeserializationSchema;
 import com.ververica.cdc.debezium.DebeziumSourceFunction;
 import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
 import com.ververica.cdc.debezium.table.DebeziumOptions;
 import org.apache.doris.flink.catalog.doris.DataModel;
+import org.apache.doris.flink.deserialization.DorisJsonDebeziumDeserializationSchema;
 import org.apache.doris.flink.tools.cdc.DatabaseSync;
 import org.apache.doris.flink.tools.cdc.SourceSchema;
 import org.slf4j.Logger;
@@ -104,7 +107,7 @@ public class Db2DatabaseSync extends DatabaseSync {
                     }
                     SourceSchema sourceSchema =
                             new Db2Schema(
-                                    metaData, null, schemaName, tableName, tableComment);
+                                    metaData, databaseName, schemaName, tableName, tableComment);
                     sourceSchema.setModel(
                             !sourceSchema.primaryKeys.isEmpty()
                                     ? DataModel.UNIQUE
@@ -136,11 +139,9 @@ public class Db2DatabaseSync extends DatabaseSync {
         } else if ("latest-offset".equalsIgnoreCase(startupMode)) {
             startupOptions = StartupOptions.latest();
         }
-
         // debezium properties set
         Properties debeziumProperties = new Properties();
-                debeziumProperties.putAll(Db2DateConverter.DEFAULT_PROPS);
-//                debeziumProperties.put("decimal.handling.mode", "string");
+        debeziumProperties.putAll(Db2DateConverter.DEFAULT_PROPS);
 
         for (Map.Entry<String, String> entry : config.toMap().entrySet()) {
             String key = entry.getKey();
@@ -151,10 +152,14 @@ public class Db2DatabaseSync extends DatabaseSync {
             }
         }
 
-        Map<String, Object> customConverterConfigs = new HashMap<>();
-        JsonDebeziumDeserializationSchema schema =
-                new JsonDebeziumDeserializationSchema(false, customConverterConfigs);
-
+        DebeziumDeserializationSchema<String> schema;
+        if (ignoreDefaultValue) {
+            schema = new DorisJsonDebeziumDeserializationSchema();
+        } else {
+            Map<String, Object> customConverterConfigs = new HashMap<>();
+            customConverterConfigs.put(JsonConverterConfig.DECIMAL_FORMAT_CONFIG, "NUMERIC");
+            schema = new JsonDebeziumDeserializationSchema(false, customConverterConfigs);
+        }
         DebeziumSourceFunction<String> db2Source =
                 Db2Source.<String>builder()
                         .hostname(hostname)
