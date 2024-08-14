@@ -98,6 +98,8 @@ public class OracleType {
             case RAW:
             case LONG_RAW:
             case INTERVAL:
+            case ROWID:
+            case UROWID:
             case BLOB:
             case CLOB:
             case NCLOB:
