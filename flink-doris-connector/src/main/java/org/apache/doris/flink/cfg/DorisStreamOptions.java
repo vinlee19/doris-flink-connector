@@ -106,18 +106,6 @@ public class DorisStreamOptions implements Serializable {
                                         prop.getProperty(
                                                 ConfigurationOptions.DORIS_TABLET_SIZE,
                                                 ConfigurationOptions.DORIS_TABLET_SIZE_DEFAULT
-                                                        .toString())))
-                        .setUseFlightSql(
-                                Boolean.valueOf(
-                                        prop.getProperty(
-                                                ConfigurationOptions.USE_FLIGHT_SQL,
-                                                ConfigurationOptions.USE_FLIGHT_SQL_DEFAULT
-                                                        .toString())))
-                        .setFlightSqlPort(
-                                Integer.valueOf(
-                                        prop.getProperty(
-                                                ConfigurationOptions.FLIGHT_SQL_PORT,
-                                                ConfigurationOptions.FLIGHT_SQL_PORT_DEFAULT
                                                         .toString())));
 
         this.options = optionsBuilder.build();
