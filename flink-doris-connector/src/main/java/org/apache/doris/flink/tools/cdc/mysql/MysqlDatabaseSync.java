@@ -17,23 +17,40 @@
 
 package org.apache.doris.flink.tools.cdc.mysql;
 
+import io.debezium.connector.mysql.MySqlPartition;
+import io.debezium.pipeline.EventDispatcher;
+import io.debezium.relational.Column;
+import io.debezium.relational.Table;
+import io.debezium.util.ColumnUtils;
+import io.debezium.util.Strings;
+import io.debezium.util.Threads;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.cdc.connectors.mysql.debezium.task.MySqlSnapshotSplitReadTask;
 import org.apache.flink.cdc.connectors.mysql.source.MySqlSource;
 import org.apache.flink.cdc.connectors.mysql.source.MySqlSourceBuilder;
+import org.apache.flink.cdc.connectors.mysql.source.assigners.MySqlSnapshotSplitAssigner;
+import org.apache.flink.cdc.connectors.mysql.source.config.MySqlSourceConfig;
+import org.apache.flink.cdc.connectors.mysql.source.config.MySqlSourceConfigFactory;
 import org.apache.flink.cdc.connectors.mysql.source.config.MySqlSourceOptions;
 import org.apache.flink.cdc.connectors.mysql.source.offset.BinlogOffset;
 import org.apache.flink.cdc.connectors.mysql.source.offset.BinlogOffsetBuilder;
+import org.apache.flink.cdc.connectors.mysql.source.split.MySqlSnapshotSplit;
+import org.apache.flink.cdc.connectors.mysql.source.split.MySqlSplit;
+import org.apache.flink.cdc.connectors.mysql.source.utils.StatementUtils;
 import org.apache.flink.cdc.connectors.mysql.table.StartupOptions;
 import org.apache.flink.cdc.connectors.shaded.org.apache.kafka.connect.json.JsonConverterConfig;
 import org.apache.flink.cdc.debezium.DebeziumDeserializationSchema;
 import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.flink.cdc.debezium.table.DebeziumOptions;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.debezium.relational.TableId;
 import org.apache.doris.flink.catalog.doris.DataModel;
 import org.apache.doris.flink.tools.cdc.DatabaseSync;
 import org.apache.doris.flink.tools.cdc.DatabaseSyncConfig;
@@ -45,21 +62,30 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.apache.flink.cdc.connectors.mysql.source.config.MySqlSourceOptions.DATABASE_NAME;
 import static org.apache.flink.cdc.debezium.utils.JdbcUrlUtils.PROPERTIES_PREFIX;
 
 public class MysqlDatabaseSync extends DatabaseSync {
+    private static ObjectMapper objectMapper = new ObjectMapper();
     private static final Logger LOG = LoggerFactory.getLogger(MysqlDatabaseSync.class);
     private static final String JDBC_URL = "jdbc:mysql://%s:%d?useInformationSchema=true";
+    private static final String SPLIT_ID = "splitId";
+    private static final String FINISH_SPLITS = "finishSplits";
+    private static final String ASSIGNED_SPLITS = "assignedSplits";
+    private static final String SNAPSHOT_TABLE = "snapshotTable";
+    private static final String PURE_BINLOG_PHASE = "pureBinlogPhase";
 
     public MysqlDatabaseSync() throws SQLException {
         super();
@@ -99,7 +125,7 @@ public class MysqlDatabaseSync extends DatabaseSync {
 
     @Override
     public List<SourceSchema> getSchemaList() throws Exception {
-        String databaseName = config.get(MySqlSourceOptions.DATABASE_NAME);
+        String databaseName = config.get(DATABASE_NAME);
 
         List<SourceSchema> schemaList = new ArrayList<>();
         try (Connection conn = getConnection()) {
@@ -138,7 +164,7 @@ public class MysqlDatabaseSync extends DatabaseSync {
     public DataStreamSource<String> buildCdcSource(StreamExecutionEnvironment env) {
         MySqlSourceBuilder<String> sourceBuilder = MySqlSource.builder();
 
-        String databaseName = config.get(MySqlSourceOptions.DATABASE_NAME);
+        String databaseName = config.get(DATABASE_NAME);
         Preconditions.checkNotNull(databaseName, "database-name in mysql is required");
         String tableName = config.get(MySqlSourceOptions.TABLE_NAME);
         sourceBuilder
@@ -148,7 +174,7 @@ public class MysqlDatabaseSync extends DatabaseSync {
                 .password(config.get(MySqlSourceOptions.PASSWORD))
                 .databaseList(databaseName)
                 .tableList(tableName);
-
+        // server_id
         config.getOptional(MySqlSourceOptions.SERVER_ID).ifPresent(sourceBuilder::serverId);
         config.getOptional(MySqlSourceOptions.SERVER_TIME_ZONE)
                 .ifPresent(sourceBuilder::serverTimeZone);
@@ -228,13 +254,16 @@ public class MysqlDatabaseSync extends DatabaseSync {
         }
         MySqlSource<String> mySqlSource =
                 sourceBuilder.deserializer(schema).includeSchemaChanges(true).build();
+        MySqlSourceConfig mysqlSourceConfig = getMysqlSourceConfig(config);
+        List<MySqlSnapshotSplit> mySqlSnapshotSplits = startSplitChunks(mysqlSourceConfig, "store_sales", config);
+        System.out.println(mySqlSnapshotSplits.size());
 
         return env.fromSource(mySqlSource, WatermarkStrategy.noWatermarks(), "MySQL Source");
     }
 
     @Override
     public String getTableListPrefix() {
-        return config.get(MySqlSourceOptions.DATABASE_NAME);
+        return config.get(DATABASE_NAME);
     }
 
     /**
@@ -268,4 +297,231 @@ public class MysqlDatabaseSync extends DatabaseSync {
         }
         return chunkMap;
     }
+
+    /**
+     *  startSplitChunk, obtain chunk info
+     */
+    private List<MySqlSnapshotSplit> startSplitChunks(
+            MySqlSourceConfig sourceConfig, String snapshotTable, Configuration config) {
+        List<TableId> remainingTables = new ArrayList<>();
+        if (snapshotTable != null) {
+            // need add database name
+            String database = config.get(DATABASE_NAME);
+            remainingTables.add(TableId.parse(database + "." + snapshotTable));
+        }
+        List<MySqlSnapshotSplit> remainingSplits = new ArrayList<>();
+        MySqlSnapshotSplitAssigner splitAssigner =
+                new MySqlSnapshotSplitAssigner(sourceConfig, 1, remainingTables, false);
+        splitAssigner.open();
+        while (true) {
+            Optional<MySqlSplit> mySqlSplit = splitAssigner.getNext();
+            if (mySqlSplit.isPresent()) {
+                MySqlSnapshotSplit snapshotSplit = mySqlSplit.get().asSnapshotSplit();
+                remainingSplits.add(snapshotSplit);
+            } else {
+                break;
+            }
+        }
+        splitAssigner.close();
+        return remainingSplits;
+    }
+
+
+    private MySqlSourceConfig getMysqlSourceConfig(Configuration configuration) {
+        // Create factory and validate required fields
+        MySqlSourceConfigFactory configFactory = new MySqlSourceConfigFactory();
+        String databaseName = validateRequiredField(
+                configuration.get(MySqlSourceOptions.DATABASE_NAME)
+        );
+        String tableName = configuration.get(MySqlSourceOptions.TABLE_NAME);
+
+        // Apply optional configurations using Java 8 Optional
+        applyOptionalConfigs(configuration, configFactory);
+
+        // Configure startup mode
+        configureStartupMode(configuration, configFactory);
+
+        // Configure basic connection settings
+        return configFactory
+                .includeSchemaChanges(true)
+                .hostname(configuration.get(MySqlSourceOptions.HOSTNAME))
+                .port(configuration.get(MySqlSourceOptions.PORT))
+                .databaseList(databaseName)
+                .tableList(tableName)
+                .username(configuration.get(MySqlSourceOptions.USERNAME))
+                .password(configuration.get(MySqlSourceOptions.PASSWORD))
+                .startupOptions(StartupOptions.latest())
+                .createConfig(0);
+    }
+
+    private String validateRequiredField(String value) {
+        return Optional.ofNullable(value)
+                .orElseThrow(() -> new IllegalArgumentException("database-name in mysql is required"));
+    }
+
+    private void applyOptionalConfigs(Configuration configuration, MySqlSourceConfigFactory configFactory) {
+        // Apply server related configurations
+        configuration.getOptional(MySqlSourceOptions.SERVER_ID)
+                .ifPresent(configFactory::serverId);
+        configuration.getOptional(MySqlSourceOptions.SERVER_TIME_ZONE)
+                .ifPresent(configFactory::serverTimeZone);
+
+        // Apply scan related configurations
+        configuration.getOptional(MySqlSourceOptions.SCAN_SNAPSHOT_FETCH_SIZE)
+                .ifPresent(configFactory::fetchSize);
+        configuration.getOptional(MySqlSourceOptions.SCAN_NEWLY_ADDED_TABLE_ENABLED)
+                .ifPresent(configFactory::scanNewlyAddedTableEnabled);
+        configuration.getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_SNAPSHOT_CHUNK_SIZE)
+                .ifPresent(configFactory::splitSize);
+        configuration.getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_CLOSE_IDLE_READER_ENABLED)
+                .ifPresent(configFactory::closeIdleReaders);
+
+        // Apply connection related configurations
+        configuration.getOptional(MySqlSourceOptions.CONNECT_TIMEOUT)
+                .ifPresent(configFactory::connectTimeout);
+        configuration.getOptional(MySqlSourceOptions.CONNECT_MAX_RETRIES)
+                .ifPresent(configFactory::connectMaxRetries);
+        configuration.getOptional(MySqlSourceOptions.CONNECTION_POOL_SIZE)
+                .ifPresent(configFactory::connectionPoolSize);
+        configuration.getOptional(MySqlSourceOptions.HEARTBEAT_INTERVAL)
+                .ifPresent(configFactory::heartbeatInterval);
+    }
+
+    private void configureStartupMode(Configuration configuration, MySqlSourceConfigFactory configFactory) {
+        String startupMode = configuration.get(MySqlSourceOptions.SCAN_STARTUP_MODE);
+
+        StartupOptions startupOptions;
+        if (startupMode == null) {
+            startupOptions = StartupOptions.latest();
+        } else {
+            switch (startupMode.toLowerCase()) {
+                case "initial":
+                    startupOptions = StartupOptions.initial();
+                    break;
+                case "earliest-offset":
+                    startupOptions = StartupOptions.earliest();
+                    break;
+                case "latest-offset":
+                    startupOptions = StartupOptions.latest();
+                    break;
+                case "specific-offset":
+                    startupOptions = createSpecificOffset(configuration);
+                    break;
+                case "timestamp":
+                    startupOptions = createTimestampOffset(configuration);
+                    break;
+                default:
+                    startupOptions = StartupOptions.latest();
+            }
+        }
+
+        configFactory.startupOptions(startupOptions);
+    }
+
+    private StartupOptions createSpecificOffset(Configuration configuration) {
+        BinlogOffsetBuilder offsetBuilder = BinlogOffset.builder();
+
+        // Handle file position
+        String file = configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_FILE);
+        Long pos = configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_POS);
+
+        offsetBuilder.setBinlogFilePosition(
+                Optional.ofNullable(file).orElse(""),
+                Optional.ofNullable(pos).orElse(0L)
+        );
+
+        // Handle skip events
+        if (configuration.containsKey(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_EVENTS.key())) {
+            offsetBuilder.setSkipEvents(
+                    configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_EVENTS)
+            );
+        }
+
+        // Handle skip rows
+        if (configuration.containsKey(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_ROWS.key())) {
+            offsetBuilder.setSkipRows(
+                    configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_ROWS)
+            );
+        }
+
+        return StartupOptions.specificOffset(offsetBuilder.build());
+    }
+
+    private StartupOptions createTimestampOffset(Configuration configuration) {
+        return StartupOptions.timestamp(
+                configuration.get(MySqlSourceOptions.SCAN_STARTUP_TIMESTAMP_MILLIS)
+        );
+    }
+
+    private void createDataEventsForTable(
+            MySqlSnapshotSplit snapshotSplit,
+            EventDispatcher.SnapshotReceiver<MySqlPartition> snapshotReceiver,
+            Table table)
+            throws InterruptedException {
+
+        long exportStart = clock.currentTimeInMillis();
+        LOG.info("Exporting data from split '{}' of table {}", snapshotSplit.splitId(), table.id());
+
+        final String selectSql =
+                StatementUtils.buildSplitScanQuery(
+                        snapshotSplit.getTableId(),
+                        snapshotSplit.getSplitKeyType(),
+                        snapshotSplit.getSplitStart() == null,
+                        snapshotSplit.getSplitEnd() == null);
+        LOG.info(
+                "For split '{}' of table {} using select statement: '{}'",
+                snapshotSplit.splitId(),
+                table.id(),
+                selectSql);
+
+        try (PreparedStatement selectStatement =
+                     StatementUtils.readTableSplitDataStatement(
+                             jdbcConnection,
+                             selectSql,
+                             snapshotSplit.getSplitStart() == null,
+                             snapshotSplit.getSplitEnd() == null,
+                             snapshotSplit.getSplitStart(),
+                             snapshotSplit.getSplitEnd(),
+                             snapshotSplit.getSplitKeyType().getFieldCount(),
+                             sourceConfig.getFetchSize());
+             ResultSet rs = selectStatement.executeQuery()) {
+
+            ColumnUtils.ColumnArray columnArray = ColumnUtils.toArray(rs, table);
+            long rows = 0;
+            Threads.Timer logTimer = getTableScanLogTimer();
+
+            while (rs.next()) {
+                rows++;
+                final Object[] row = new Object[columnArray.getGreatestColumnPosition()];
+                for (int i = 0; i < columnArray.getColumns().length; i++) {
+                    Column actualColumn = table.columns().get(i);
+                    row[columnArray.getColumns()[i].position() - 1] =
+                            readField(rs, i + 1, actualColumn, table);
+                }
+                if (logTimer.expired()) {
+                    long stop = clock.currentTimeInMillis();
+                    LOG.info(
+                            "Exported {} records for split '{}' after {}",
+                            rows,
+                            snapshotSplit.splitId(),
+                            Strings.duration(stop - exportStart));
+                    snapshotChangeEventSourceMetrics.rowsScanned(
+                            snapshotContext.partition, table.id(), rows);
+                    logTimer = getTableScanLogTimer();
+                }
+                dispatcher.dispatchSnapshotEvent(
+                        (MySqlPartition) snapshotContext.partition,
+                        table.id(),
+                        getChangeRecordEmitter(snapshotContext, table.id(), row),
+                        snapshotReceiver);
+            }
+            LOG.info(
+                    "Finished exporting {} records for split '{}', total duration '{}'",
+                    rows,
+                    snapshotSplit.splitId(),
+                    Strings.duration(clock.currentTimeInMillis() - exportStart));
+        } catch (SQLException e) {
+            throw new ConnectException("Snapshotting of table " + table.id() + " failed", e);
+        }
+
 }

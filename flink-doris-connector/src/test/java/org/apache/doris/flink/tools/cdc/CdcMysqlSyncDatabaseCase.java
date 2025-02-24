@@ -44,24 +44,24 @@ public class CdcMysqlSyncDatabaseCase {
         Configuration configuration = Configuration.fromMap(flinkMap);
         env.configure(configuration);
 
-        String database = "db1";
+        String database = "doris_test";
         String tablePrefix = "";
         String tableSuffix = "";
         Map<String, String> mysqlConfig = new HashMap<>();
-        mysqlConfig.put(MySqlSourceOptions.DATABASE_NAME.key(), "test");
-        mysqlConfig.put(MySqlSourceOptions.HOSTNAME.key(), "127.0.0.1");
-        mysqlConfig.put(MySqlSourceOptions.PORT.key(), "3306");
+        mysqlConfig.put(MySqlSourceOptions.DATABASE_NAME.key(), "tpcds");
+        mysqlConfig.put(MySqlSourceOptions.HOSTNAME.key(), "172.21.16.12");
+        mysqlConfig.put(MySqlSourceOptions.PORT.key(), "23306");
         mysqlConfig.put(MySqlSourceOptions.USERNAME.key(), "root");
-        mysqlConfig.put(MySqlSourceOptions.PASSWORD.key(), "12345678");
+        mysqlConfig.put(MySqlSourceOptions.PASSWORD.key(), "123456");
         // add jdbc properties for MySQL
         mysqlConfig.put("jdbc.properties.use_ssl", "false");
         Configuration config = Configuration.fromMap(mysqlConfig);
 
         Map<String, String> sinkConfig = new HashMap<>();
-        sinkConfig.put(DorisConfigOptions.FENODES.key(), "10.20.30.1:8030");
+        sinkConfig.put(DorisConfigOptions.FENODES.key(), "172.21.16.12:38230");
         sinkConfig.put(DorisConfigOptions.USERNAME.key(), "root");
-        sinkConfig.put(DorisConfigOptions.PASSWORD.key(), "");
-        sinkConfig.put(DorisConfigOptions.JDBC_URL.key(), "jdbc:mysql://10.20.30.1:9030");
+        sinkConfig.put(DorisConfigOptions.PASSWORD.key(), "123456");
+        sinkConfig.put(DorisConfigOptions.JDBC_URL.key(), "jdbc:mysql://172.21.16.12:39230");
         sinkConfig.put(DorisConfigOptions.SINK_LABEL_PREFIX.key(), UUID.randomUUID().toString());
         sinkConfig.put("sink.enable-delete", "false");
         Configuration sinkConf = Configuration.fromMap(sinkConfig);
@@ -70,7 +70,7 @@ public class CdcMysqlSyncDatabaseCase {
         tableConfig.put(DorisTableConfig.REPLICATION_NUM, "1");
         tableConfig.put(DorisTableConfig.TABLE_BUCKETS, "tbl1:10,tbl2:20,a.*:30,b.*:40,.*:50");
         // String includingTables = "tbl1|tbl2|tbl3";
-        String includingTables = "a_.*|b_.*|c";
+        String includingTables = "store_sales";
         String excludingTables = "";
         String multiToOneOrigin = "a_.*|b_.*";
         String multiToOneTarget = "a|b";

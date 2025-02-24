@@ -163,6 +163,7 @@ public abstract class DatabaseSync {
         LOG.info("table mapping: {}", tableMapping);
         config.setString(TABLE_NAME_OPTIONS, getSyncTableList(syncTables));
         DataStreamSource<String> streamSource = buildCdcSource(env);
+
         if (singleSink) {
             streamSource.sinkTo(buildDorisSink());
         } else {
