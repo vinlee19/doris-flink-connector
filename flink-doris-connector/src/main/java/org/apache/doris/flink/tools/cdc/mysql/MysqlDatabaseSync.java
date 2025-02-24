@@ -17,15 +17,9 @@
 
 package org.apache.doris.flink.tools.cdc.mysql;
 
-import io.debezium.connector.mysql.MySqlPartition;
-import io.debezium.pipeline.EventDispatcher;
-import io.debezium.relational.Column;
-import io.debezium.relational.Table;
-import io.debezium.util.ColumnUtils;
-import io.debezium.util.Strings;
-import io.debezium.util.Threads;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.cdc.connectors.mysql.debezium.task.MySqlSnapshotSplitReadTask;
+import org.apache.flink.cdc.connectors.mysql.debezium.DebeziumUtils;
+import org.apache.flink.cdc.connectors.mysql.debezium.task.context.StatefulTaskContext;
 import org.apache.flink.cdc.connectors.mysql.source.MySqlSource;
 import org.apache.flink.cdc.connectors.mysql.source.MySqlSourceBuilder;
 import org.apache.flink.cdc.connectors.mysql.source.assigners.MySqlSnapshotSplitAssigner;
@@ -50,7 +44,21 @@ import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.shyiko.mysql.binlog.BinaryLogClient;
+import io.debezium.connector.mysql.MySqlConnection;
+import io.debezium.connector.mysql.MySqlDatabaseSchema;
+import io.debezium.connector.mysql.MySqlOffsetContext;
+import io.debezium.connector.mysql.MySqlPartition;
+import io.debezium.connector.mysql.MySqlValueConverters;
+import io.debezium.pipeline.EventDispatcher;
+import io.debezium.relational.Column;
+import io.debezium.relational.RelationalSnapshotChangeEventSource;
+import io.debezium.relational.Table;
 import io.debezium.relational.TableId;
+import io.debezium.util.Clock;
+import io.debezium.util.ColumnUtils;
+import io.debezium.util.Strings;
+import io.debezium.util.Threads;
 import org.apache.doris.flink.catalog.doris.DataModel;
 import org.apache.doris.flink.tools.cdc.DatabaseSync;
 import org.apache.doris.flink.tools.cdc.DatabaseSyncConfig;
@@ -59,13 +67,18 @@ import org.apache.doris.flink.tools.cdc.deserialize.DorisJsonDebeziumDeserializa
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.UnsupportedEncodingException;
+import java.sql.Blob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,14 +91,9 @@ import static org.apache.flink.cdc.connectors.mysql.source.config.MySqlSourceOpt
 import static org.apache.flink.cdc.debezium.utils.JdbcUrlUtils.PROPERTIES_PREFIX;
 
 public class MysqlDatabaseSync extends DatabaseSync {
-    private static ObjectMapper objectMapper = new ObjectMapper();
     private static final Logger LOG = LoggerFactory.getLogger(MysqlDatabaseSync.class);
+    private static final Duration LOG_INTERVAL = Duration.ofMillis(10_000);
     private static final String JDBC_URL = "jdbc:mysql://%s:%d?useInformationSchema=true";
-    private static final String SPLIT_ID = "splitId";
-    private static final String FINISH_SPLITS = "finishSplits";
-    private static final String ASSIGNED_SPLITS = "assignedSplits";
-    private static final String SNAPSHOT_TABLE = "snapshotTable";
-    private static final String PURE_BINLOG_PHASE = "pureBinlogPhase";
 
     public MysqlDatabaseSync() throws SQLException {
         super();
@@ -161,7 +169,7 @@ public class MysqlDatabaseSync extends DatabaseSync {
     }
 
     @Override
-    public DataStreamSource<String> buildCdcSource(StreamExecutionEnvironment env) {
+    public DataStreamSource<String> buildCdcSource(StreamExecutionEnvironment env) throws MysqlConnectException, InterruptedException {
         MySqlSourceBuilder<String> sourceBuilder = MySqlSource.builder();
 
         String databaseName = config.get(DATABASE_NAME);
@@ -255,8 +263,11 @@ public class MysqlDatabaseSync extends DatabaseSync {
         MySqlSource<String> mySqlSource =
                 sourceBuilder.deserializer(schema).includeSchemaChanges(true).build();
         MySqlSourceConfig mysqlSourceConfig = getMysqlSourceConfig(config);
-        List<MySqlSnapshotSplit> mySqlSnapshotSplits = startSplitChunks(mysqlSourceConfig, "store_sales", config);
-        System.out.println(mySqlSnapshotSplits.size());
+        List<MySqlSnapshotSplit> mySqlSnapshotSplits =
+                startSplitChunks(mysqlSourceConfig, "store_sales", config);
+        MySqlSnapshotSplit mySqlSnapshotSplit = mySqlSnapshotSplits.get(0);
+        List<Object> snapshotReaderResult = getSnapshotReaderResult(mySqlSnapshotSplit, mysqlSourceConfig);
+        System.out.println(snapshotReaderResult.size());
 
         return env.fromSource(mySqlSource, WatermarkStrategy.noWatermarks(), "MySQL Source");
     }
@@ -298,9 +309,7 @@ public class MysqlDatabaseSync extends DatabaseSync {
         return chunkMap;
     }
 
-    /**
-     *  startSplitChunk, obtain chunk info
-     */
+    /** startSplitChunk, obtain chunk info */
     private List<MySqlSnapshotSplit> startSplitChunks(
             MySqlSourceConfig sourceConfig, String snapshotTable, Configuration config) {
         List<TableId> remainingTables = new ArrayList<>();
@@ -326,13 +335,11 @@ public class MysqlDatabaseSync extends DatabaseSync {
         return remainingSplits;
     }
 
-
     private MySqlSourceConfig getMysqlSourceConfig(Configuration configuration) {
         // Create factory and validate required fields
         MySqlSourceConfigFactory configFactory = new MySqlSourceConfigFactory();
-        String databaseName = validateRequiredField(
-                configuration.get(MySqlSourceOptions.DATABASE_NAME)
-        );
+        String databaseName =
+                validateRequiredField(configuration.get(MySqlSourceOptions.DATABASE_NAME));
         String tableName = configuration.get(MySqlSourceOptions.TABLE_NAME);
 
         // Apply optional configurations using Java 8 Optional
@@ -356,38 +363,49 @@ public class MysqlDatabaseSync extends DatabaseSync {
 
     private String validateRequiredField(String value) {
         return Optional.ofNullable(value)
-                .orElseThrow(() -> new IllegalArgumentException("database-name in mysql is required"));
+                .orElseThrow(
+                        () -> new IllegalArgumentException("database-name in mysql is required"));
     }
 
-    private void applyOptionalConfigs(Configuration configuration, MySqlSourceConfigFactory configFactory) {
+    private void applyOptionalConfigs(
+            Configuration configuration, MySqlSourceConfigFactory configFactory) {
         // Apply server related configurations
-        configuration.getOptional(MySqlSourceOptions.SERVER_ID)
-                .ifPresent(configFactory::serverId);
-        configuration.getOptional(MySqlSourceOptions.SERVER_TIME_ZONE)
+        configuration.getOptional(MySqlSourceOptions.SERVER_ID).ifPresent(configFactory::serverId);
+        configuration
+                .getOptional(MySqlSourceOptions.SERVER_TIME_ZONE)
                 .ifPresent(configFactory::serverTimeZone);
 
         // Apply scan related configurations
-        configuration.getOptional(MySqlSourceOptions.SCAN_SNAPSHOT_FETCH_SIZE)
+        configuration
+                .getOptional(MySqlSourceOptions.SCAN_SNAPSHOT_FETCH_SIZE)
                 .ifPresent(configFactory::fetchSize);
-        configuration.getOptional(MySqlSourceOptions.SCAN_NEWLY_ADDED_TABLE_ENABLED)
+        configuration
+                .getOptional(MySqlSourceOptions.SCAN_NEWLY_ADDED_TABLE_ENABLED)
                 .ifPresent(configFactory::scanNewlyAddedTableEnabled);
-        configuration.getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_SNAPSHOT_CHUNK_SIZE)
+        configuration
+                .getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_SNAPSHOT_CHUNK_SIZE)
                 .ifPresent(configFactory::splitSize);
-        configuration.getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_CLOSE_IDLE_READER_ENABLED)
+        configuration
+                .getOptional(MySqlSourceOptions.SCAN_INCREMENTAL_CLOSE_IDLE_READER_ENABLED)
                 .ifPresent(configFactory::closeIdleReaders);
 
         // Apply connection related configurations
-        configuration.getOptional(MySqlSourceOptions.CONNECT_TIMEOUT)
+        configuration
+                .getOptional(MySqlSourceOptions.CONNECT_TIMEOUT)
                 .ifPresent(configFactory::connectTimeout);
-        configuration.getOptional(MySqlSourceOptions.CONNECT_MAX_RETRIES)
+        configuration
+                .getOptional(MySqlSourceOptions.CONNECT_MAX_RETRIES)
                 .ifPresent(configFactory::connectMaxRetries);
-        configuration.getOptional(MySqlSourceOptions.CONNECTION_POOL_SIZE)
+        configuration
+                .getOptional(MySqlSourceOptions.CONNECTION_POOL_SIZE)
                 .ifPresent(configFactory::connectionPoolSize);
-        configuration.getOptional(MySqlSourceOptions.HEARTBEAT_INTERVAL)
+        configuration
+                .getOptional(MySqlSourceOptions.HEARTBEAT_INTERVAL)
                 .ifPresent(configFactory::heartbeatInterval);
     }
 
-    private void configureStartupMode(Configuration configuration, MySqlSourceConfigFactory configFactory) {
+    private void configureStartupMode(
+            Configuration configuration, MySqlSourceConfigFactory configFactory) {
         String startupMode = configuration.get(MySqlSourceOptions.SCAN_STARTUP_MODE);
 
         StartupOptions startupOptions;
@@ -426,22 +444,20 @@ public class MysqlDatabaseSync extends DatabaseSync {
         Long pos = configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_POS);
 
         offsetBuilder.setBinlogFilePosition(
-                Optional.ofNullable(file).orElse(""),
-                Optional.ofNullable(pos).orElse(0L)
-        );
+                Optional.ofNullable(file).orElse(""), Optional.ofNullable(pos).orElse(0L));
 
         // Handle skip events
-        if (configuration.containsKey(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_EVENTS.key())) {
+        if (configuration.containsKey(
+                MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_EVENTS.key())) {
             offsetBuilder.setSkipEvents(
-                    configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_EVENTS)
-            );
+                    configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_EVENTS));
         }
 
         // Handle skip rows
-        if (configuration.containsKey(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_ROWS.key())) {
+        if (configuration.containsKey(
+                MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_ROWS.key())) {
             offsetBuilder.setSkipRows(
-                    configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_ROWS)
-            );
+                    configuration.get(MySqlSourceOptions.SCAN_STARTUP_SPECIFIC_OFFSET_SKIP_ROWS));
         }
 
         return StartupOptions.specificOffset(offsetBuilder.build());
@@ -449,19 +465,49 @@ public class MysqlDatabaseSync extends DatabaseSync {
 
     private StartupOptions createTimestampOffset(Configuration configuration) {
         return StartupOptions.timestamp(
-                configuration.get(MySqlSourceOptions.SCAN_STARTUP_TIMESTAMP_MILLIS)
-        );
+                configuration.get(MySqlSourceOptions.SCAN_STARTUP_TIMESTAMP_MILLIS));
     }
 
-    private void createDataEventsForTable(
-            MySqlSnapshotSplit snapshotSplit,
-            EventDispatcher.SnapshotReceiver<MySqlPartition> snapshotReceiver,
-            Table table)
-            throws InterruptedException {
+    private List<Object> getSnapshotReaderResult(
+            MySqlSnapshotSplit mySqlSnapshotSplit, MySqlSourceConfig sourceConfig)
+            throws  MysqlConnectException {
+        final MySqlConnection jdbcConnection = DebeziumUtils.createMySqlConnection(sourceConfig);
+        final BinaryLogClient binaryLogClient =
+                DebeziumUtils.createBinaryClient(sourceConfig.getDbzConfiguration());
+        final StatefulTaskContext statefulTaskContext =
+                new StatefulTaskContext(sourceConfig, binaryLogClient, jdbcConnection);
+        statefulTaskContext.configure(mySqlSnapshotSplit);
+        TableId tableId = mySqlSnapshotSplit.getTableId();
+        MySqlDatabaseSchema databaseSchema = statefulTaskContext.getDatabaseSchema();
+        Table table = databaseSchema.tableFor(tableId);
+        EventDispatcher.SnapshotReceiver<MySqlPartition> snapshotReceiver =
+                statefulTaskContext.getSnapshotReceiver();
 
+        return createDataEventsForTable(
+                mySqlSnapshotSplit,
+                sourceConfig,
+                jdbcConnection,
+                snapshotReceiver,
+                StatefulTaskContext.getClock(),
+                table);
+    }
+
+    /**
+     * Dispatches the data change events for the records of a single table. the detail of the method
+     * is in the source code of the debezium
+     */
+    private List<Object> createDataEventsForTable(
+            MySqlSnapshotSplit snapshotSplit,
+            MySqlSourceConfig sourceConfig,
+            MySqlConnection jdbcConnection,
+            EventDispatcher.SnapshotReceiver<MySqlPartition> snapshotReceiver,
+            Clock clock,
+            Table table)
+            throws MysqlConnectException {
+        List<Object> result = new ArrayList<>();
         long exportStart = clock.currentTimeInMillis();
         LOG.info("Exporting data from split '{}' of table {}", snapshotSplit.splitId(), table.id());
-
+        // in snapshot phase, use jdbc read data directly.
         final String selectSql =
                 StatementUtils.buildSplitScanQuery(
                         snapshotSplit.getTableId(),
@@ -475,23 +521,24 @@ public class MysqlDatabaseSync extends DatabaseSync {
                 selectSql);
 
         try (PreparedStatement selectStatement =
-                     StatementUtils.readTableSplitDataStatement(
-                             jdbcConnection,
-                             selectSql,
-                             snapshotSplit.getSplitStart() == null,
-                             snapshotSplit.getSplitEnd() == null,
-                             snapshotSplit.getSplitStart(),
-                             snapshotSplit.getSplitEnd(),
-                             snapshotSplit.getSplitKeyType().getFieldCount(),
-                             sourceConfig.getFetchSize());
-             ResultSet rs = selectStatement.executeQuery()) {
+                        StatementUtils.readTableSplitDataStatement(
+                                jdbcConnection,
+                                selectSql,
+                                snapshotSplit.getSplitStart() == null,
+                                snapshotSplit.getSplitEnd() == null,
+                                snapshotSplit.getSplitStart(),
+                                snapshotSplit.getSplitEnd(),
+                                snapshotSplit.getSplitKeyType().getFieldCount(),
+                                sourceConfig.getFetchSize());
+                ResultSet rs = selectStatement.executeQuery()) {
 
             ColumnUtils.ColumnArray columnArray = ColumnUtils.toArray(rs, table);
             long rows = 0;
-            Threads.Timer logTimer = getTableScanLogTimer();
+            Threads.Timer logTimer = getTableScanLogTimer(clock);
 
             while (rs.next()) {
                 rows++;
+                // 数组数组，用于存储结果集的每一行的数据
                 final Object[] row = new Object[columnArray.getGreatestColumnPosition()];
                 for (int i = 0; i < columnArray.getColumns().length; i++) {
                     Column actualColumn = table.columns().get(i);
@@ -505,15 +552,8 @@ public class MysqlDatabaseSync extends DatabaseSync {
                             rows,
                             snapshotSplit.splitId(),
                             Strings.duration(stop - exportStart));
-                    snapshotChangeEventSourceMetrics.rowsScanned(
-                            snapshotContext.partition, table.id(), rows);
-                    logTimer = getTableScanLogTimer();
                 }
-                dispatcher.dispatchSnapshotEvent(
-                        (MySqlPartition) snapshotContext.partition,
-                        table.id(),
-                        getChangeRecordEmitter(snapshotContext, table.id(), row),
-                        snapshotReceiver);
+                result.add(row);
             }
             LOG.info(
                     "Finished exporting {} records for split '{}', total duration '{}'",
@@ -521,7 +561,108 @@ public class MysqlDatabaseSync extends DatabaseSync {
                     snapshotSplit.splitId(),
                     Strings.duration(clock.currentTimeInMillis() - exportStart));
         } catch (SQLException e) {
-            throw new ConnectException("Snapshotting of table " + table.id() + " failed", e);
+            throw new MysqlConnectException("Snapshotting of table " + table.id() + " failed", e);
         }
+        return result;
+    }
+
+    /**
+     * Read JDBC return value and deal special type like time, timestamp.
+     *
+     * <p>Note https://issues.redhat.com/browse/DBZ-3238 has fixed this issue, please remove this
+     * method once we bump Debezium version to 1.6
+     */
+    private Object readField(ResultSet rs, int fieldNo, Column actualColumn, Table actualTable)
+            throws SQLException {
+        if (actualColumn.jdbcType() == Types.TIME) {
+            return readTimeField(rs, fieldNo);
+        } else if (actualColumn.jdbcType() == Types.DATE) {
+            return readDateField(rs, fieldNo, actualColumn, actualTable);
+        }
+        // This is for DATETIME columns (a logical date + time without time zone)
+        // by reading them with a calendar based on the default time zone, we make sure that the
+        // value
+        // is constructed correctly using the database's (or connection's) time zone
+        else if (actualColumn.jdbcType() == Types.TIMESTAMP) {
+            return readTimestampField(rs, fieldNo, actualColumn, actualTable);
+        }
+        // JDBC's rs.GetObject() will return a Boolean for all TINYINT(1) columns.
+        // TINYINT columns are reprtoed as SMALLINT by JDBC driver
+        else if (actualColumn.jdbcType() == Types.TINYINT
+                || actualColumn.jdbcType() == Types.SMALLINT) {
+            // It seems that rs.wasNull() returns false when default value is set and NULL is
+            // inserted
+            // We thus need to use getObject() to identify if the value was provided and if yes then
+            // read it again to get correct scale
+            return rs.getObject(fieldNo) == null ? null : rs.getInt(fieldNo);
+        } else {
+            return rs.getObject(fieldNo);
+        }
+    }
+
+    /**
+     * As MySQL connector/J implementation is broken for MySQL type "TIME" we have to use a
+     * binary-ish workaround. https://issues.jboss.org/browse/DBZ-342
+     */
+    private Object readTimeField(ResultSet rs, int fieldNo) throws SQLException {
+        Blob b = rs.getBlob(fieldNo);
+        if (b == null) {
+            return null; // Don't continue parsing time field if it is null
+        }
+
+        try {
+            return MySqlValueConverters.stringToDuration(
+                    new String(b.getBytes(1, (int) (b.length())), "UTF-8"));
+        } catch (UnsupportedEncodingException e) {
+            LOG.error("Could not read MySQL TIME value as UTF-8");
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * In non-string mode the date field can contain zero in any of the date part which we need to
+     * handle as all-zero.
+     */
+    private Object readDateField(ResultSet rs, int fieldNo, Column column, Table table)
+            throws SQLException {
+        Blob b = rs.getBlob(fieldNo);
+        if (b == null) {
+            return null; // Don't continue parsing date field if it is null
+        }
+
+        try {
+            return MySqlValueConverters.stringToLocalDate(
+                    new String(b.getBytes(1, (int) (b.length())), "UTF-8"), column, table);
+        } catch (UnsupportedEncodingException e) {
+            LOG.error("Could not read MySQL TIME value as UTF-8");
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * In non-string mode the time field can contain zero in any of the date part which we need to
+     * handle as all-zero.
+     */
+    private Object readTimestampField(ResultSet rs, int fieldNo, Column column, Table table)
+            throws SQLException {
+        Blob b = rs.getBlob(fieldNo);
+        if (b == null) {
+            return null; // Don't continue parsing timestamp field if it is null
+        }
+
+        try {
+            return MySqlValueConverters.containsZeroValuesInDatePart(
+                            (new String(b.getBytes(1, (int) (b.length())), "UTF-8")), column, table)
+                    ? null
+                    : rs.getTimestamp(fieldNo, Calendar.getInstance());
+        } catch (UnsupportedEncodingException e) {
+            LOG.error("Could not read MySQL TIME value as UTF-8");
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Threads.Timer getTableScanLogTimer(Clock clock) {
+        return Threads.timer(clock, LOG_INTERVAL);
+    }
 
 }

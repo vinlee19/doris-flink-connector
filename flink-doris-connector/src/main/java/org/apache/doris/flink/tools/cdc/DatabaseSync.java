@@ -17,6 +17,7 @@
 
 package org.apache.doris.flink.tools.cdc;
 
+import org.apache.doris.flink.tools.cdc.mysql.MysqlConnectException;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -99,7 +100,7 @@ public abstract class DatabaseSync {
 
     public abstract List<SourceSchema> getSchemaList() throws Exception;
 
-    public abstract DataStreamSource<String> buildCdcSource(StreamExecutionEnvironment env);
+    public abstract DataStreamSource<String> buildCdcSource(StreamExecutionEnvironment env) throws MysqlConnectException, InterruptedException;
 
     /** Get the prefix of a specific tableList, for example, mysql is database, oracle is schema. */
     public abstract String getTableListPrefix();
