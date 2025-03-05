@@ -17,6 +17,8 @@
 
 package org.apache.doris.flink.source;
 
+import org.apache.doris.flink.tools.lineage.DefaultTypeDatasetFacet;
+import org.apache.doris.flink.tools.lineage.LineageUtils;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.connector.source.Boundedness;
@@ -27,6 +29,9 @@ import org.apache.flink.api.connector.source.SplitEnumerator;
 import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
+import org.apache.flink.streaming.api.lineage.LineageDataset;
+import org.apache.flink.streaming.api.lineage.LineageVertex;
+import org.apache.flink.streaming.api.lineage.LineageVertexProvider;
 import org.apache.flink.util.Preconditions;
 
 import org.apache.doris.flink.cfg.DorisOptions;
@@ -53,7 +58,8 @@ import java.util.List;
 /** DorisSource based on FLIP-27 which is a BOUNDED stream. */
 @PublicEvolving
 public class DorisSource<OUT>
-        implements Source<OUT, DorisSourceSplit, PendingSplitsCheckpoint>,
+        implements LineageVertexProvider,
+                Source<OUT, DorisSourceSplit, PendingSplitsCheckpoint>,
                 ResultTypeQueryable<OUT> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DorisSource.class);
@@ -149,6 +155,12 @@ public class DorisSource<OUT>
 
     public static <OUT> DorisSourceBuilder<OUT> builder() {
         return new DorisSourceBuilder();
+    }
+
+    @Override
+    public LineageVertex getLineageVertex() {
+        String jdbcUrl = options.getJdbcUrl();
+        return null;
     }
 
     /**
