@@ -51,6 +51,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -518,8 +519,18 @@ public abstract class DatabaseSync {
 
     protected String getJdbcUrlTemplate(String initialJdbcUrl, Properties jdbcProperties) {
         StringBuilder jdbcUrlBuilder = new StringBuilder(initialJdbcUrl);
-        jdbcProperties.forEach(
-                (key, value) -> jdbcUrlBuilder.append("&").append(key).append("=").append(value));
+
+        List<String> sortedKeys = new ArrayList<>(jdbcProperties.stringPropertyNames());
+        Collections.sort(sortedKeys);
+
+        for (String key : sortedKeys) {
+            jdbcUrlBuilder
+                    .append("&")
+                    .append(key)
+                    .append("=")
+                    .append(jdbcProperties.getProperty(key));
+        }
+
         return jdbcUrlBuilder.toString();
     }
 
