@@ -35,13 +35,18 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testcontainers.shaded.org.awaitility.Awaitility;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /** DorisSink ITCase failover case */
 @RunWith(Parameterized.class)

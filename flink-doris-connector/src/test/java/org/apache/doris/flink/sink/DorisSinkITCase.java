@@ -58,9 +58,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import static org.apache.flink.api.common.JobStatus.FINISHED;
 import static org.apache.flink.api.common.JobStatus.RUNNING;
+import org.testcontainers.shaded.org.awaitility.Awaitility;
 
 /** DorisSink ITCase with csv and arrow format. */
 @RunWith(Parameterized.class)
