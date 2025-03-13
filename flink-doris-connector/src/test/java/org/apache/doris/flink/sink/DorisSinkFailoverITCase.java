@@ -42,15 +42,18 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testcontainers.shaded.org.awaitility.Awaitility;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /** DorisSink ITCase failover case */
 @RunWith(Parameterized.class)
@@ -160,12 +163,21 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
                     faultInjectionClear();
                 } else if (FaultType.RESTART_FAILURE.equals(faultType)) {
                     // docker image restart time is about 60s
-                    randomSleepMs = randomSleepMs + 60;
+                    int stabilizationTime = randomSleepMs + 60;
+                    LOG.info("Restarting doris cluster, will wait {} s after restart completes for stabilization", randomSleepMs);
+
                     dorisContainerService.restartContainer();
-                    LOG.info(
-                            "Restarting doris cluster, sleep {}s before next restart",
-                            randomSleepMs);
-                    Thread.sleep(randomSleepMs * 1000);
+                    LOG.info("Doris container restart completed, waiting for system stabilization");
+                    Awaitility.await("Post-restart stabilization")
+                            .pollInterval(1, TimeUnit.SECONDS)
+                            .pollDelay(Duration.ofSeconds(randomSleepMs))
+                            .atMost(Duration.ofSeconds(stabilizationTime + 10))
+                            .until(() -> {
+                                LOG.debug("System stabilization in progress...");
+                                return true;
+                            });
+
+                    LOG.info("System stabilization period completed after container restart");
                 }
             } else {
                 // Avoid frequent queries
