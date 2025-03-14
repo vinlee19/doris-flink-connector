@@ -24,8 +24,31 @@ on:
       - 'master'
 
 jobs:
+  pipeline-diagram:
+    name: "0/5: Pipeline Diagram"
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Generate Pipeline Diagram
+        run: |
+          echo "## CI/CD Pipeline Diagram" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```mermaid' >> $GITHUB_STEP_SUMMARY
+          echo 'flowchart TD' >> $GITHUB_STEP_SUMMARY
+          echo '    Start((Start)) --> LC["1/6: License Check"]' >> $GITHUB_STEP_SUMMARY
+          echo '    Start --> CS["2/6: CheckStyle"]' >> $GITHUB_STEP_SUMMARY
+          echo '    LC --> BC["3/6: Build Connector"]' >> $GITHUB_STEP_SUMMARY
+          echo '    CS --> BC' >> $GITHUB_STEP_SUMMARY
+          echo '    BC ---> E2E["4/6: E2E Tests"]' >> $GITHUB_STEP_SUMMARY
+          echo '    E2E --> IT["5/6: Integration Tests"]' >> $GITHUB_STEP_SUMMARY
+          echo '    BC ---> RC["6/6: Required Checks"]' >> $GITHUB_STEP_SUMMARY
+          echo '    E2E ---> RC' >> $GITHUB_STEP_SUMMARY
+          echo '    IT --> RC' >> $GITHUB_STEP_SUMMARY
+          echo '    RC --> End((End))' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
   license-check:
-    name: "License Check"
+    name: "1/5: License Check"
     runs-on: ubuntu-latest
     steps:
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
@@ -36,7 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   checkstyle:
-    name: "CheckStyle"
+    name: "2/5: CheckStyle"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -58,7 +81,7 @@ jobs:
           cd flink-doris-connector && mvn clean compile checkstyle:checkstyle
 
   build-connector:
-    name: "Build Connector"
+    name: "3/5: Build Connector"
     needs: [license-check, checkstyle]
     runs-on: ubuntu-latest
     defaults:
@@ -118,9 +141,42 @@ jobs:
             -Dflink.minor.version=1.20 \
             -Dflink.python.id=flink-python
 
+  run-e2ecases:
+    name: "4/5: E2E Tests"
+    needs: [build-connector]
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup java
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: '8'
+          cache: maven
+
+      - name: Clean Docker resources
+        run: docker system prune -f -a
+
+      - name: Run E2ECases
+        run: |
+          cd flink-doris-connector && mvn test -Dtest="*E2ECase" -Dimage="yagagagaga/doris-standalone:2.1.7"
+
+      - name: Clean resources
+        if: always()
+        run: |
+          docker system prune -f
+          cd flink-doris-connector && mvn clean
+
   run-itcases:
-    name: "Run ITCases"
-    needs: [run-e2ecases]
+    name: "5/5: Integration Tests"
+    needs: [build-connector]
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
@@ -151,38 +207,6 @@ jobs:
       - name: Run ITCases
         run: |
           cd flink-doris-connector && mvn test -Dtest="*ITCase" -Dimage="yagagagaga/doris-standalone:2.1.7"
-
-      - name: Clean resources
-        if: always()
-        run: |
-          docker system prune -f
-          cd flink-doris-connector && mvn clean
-
-  run-e2ecases:
-    name: "Run E2ECases"
-    runs-on: ubuntu-latest
-    env:
-      TZ: Asia/Shanghai
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Setup java
-        uses: actions/setup-java@v3
-        with:
-          distribution: temurin
-          java-version: '8'
-          cache: maven
-
-      - name: Clean Docker resources
-        run: docker system prune -f -a
-
-      - name: Run E2ECases
-        run: |
-          cd flink-doris-connector && mvn test -Dtest="*E2ECase" -Dimage="yagagagaga/doris-standalone:2.1.7"
 
       - name: Clean resources
         if: always()

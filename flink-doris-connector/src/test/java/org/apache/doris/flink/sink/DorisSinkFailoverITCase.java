@@ -164,7 +164,9 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
                 } else if (FaultType.RESTART_FAILURE.equals(faultType)) {
                     // docker image restart time is about 60s
                     int stabilizationTime = randomSleepMs + 60;
-                    LOG.info("Restarting doris cluster, will wait {} s after restart completes for stabilization", randomSleepMs);
+                    LOG.info(
+                            "Restarting doris cluster, will wait {} s after restart completes for stabilization",
+                            randomSleepMs);
 
                     dorisContainerService.restartContainer();
                     LOG.info("Doris container restart completed, waiting for system stabilization");
@@ -172,10 +174,11 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
                             .pollInterval(1, TimeUnit.SECONDS)
                             .pollDelay(Duration.ofSeconds(randomSleepMs))
                             .atMost(Duration.ofSeconds(stabilizationTime + 10))
-                            .until(() -> {
-                                LOG.debug("System stabilization in progress...");
-                                return true;
-                            });
+                            .until(
+                                    () -> {
+                                        LOG.debug("System stabilization in progress...");
+                                        return true;
+                                    });
 
                     LOG.info("System stabilization period completed after container restart");
                 }

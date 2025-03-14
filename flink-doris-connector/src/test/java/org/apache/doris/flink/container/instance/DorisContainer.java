@@ -24,7 +24,6 @@ import org.apache.doris.flink.container.config.DorisPorts.FE;
 import org.apache.doris.flink.exception.DorisRuntimeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.Container.ExecResult;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -33,6 +32,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.shaded.org.awaitility.Awaitility;
 import org.testcontainers.shaded.org.awaitility.core.ConditionTimeoutException;
 import org.testcontainers.utility.DockerLoggerFactory;
+import org.testcontainers.utility.MountableFile;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -102,10 +102,12 @@ public class DorisContainer implements ContainerService {
                                 "sh",
                                 "-c",
                                 "chmod -R 644 /root/be/conf/be.conf /root/fe/conf/fe.conf && chmod -R 755 /root/be/conf /root/fe/conf && chown -R root:root /root/be/conf /root/fe/conf")
-                        .withFileSystemBind(
-                                "docker/doris/be/", "/root/be/conf/", BindMode.READ_WRITE)
-                        .withFileSystemBind(
-                                "docker/doris/fe/", "/root/fe/conf/", BindMode.READ_WRITE)
+                        .withCopyFileToContainer(
+                                MountableFile.forClasspathResource("docker/doris/be.conf"),
+                                "/root/be/conf/be.conf")
+                        .withCopyFileToContainer(
+                                MountableFile.forClasspathResource("docker/doris/fe.conf"),
+                                "/root/fe/conf/fe.conf")
                         .withEnv("TZ", systemTimeZone)
                         .waitingFor(Wait.forListeningPort());
 
@@ -147,9 +149,10 @@ public class DorisContainer implements ContainerService {
     public void restartContainer() {
         LOG.info("Restarting Doris container...");
 
-        try (RestartContainerCmd restartCmd = dorisContainer
-                .getDockerClient()
-                .restartContainerCmd(dorisContainer.getContainerId())) {
+        try (RestartContainerCmd restartCmd =
+                dorisContainer
+                        .getDockerClient()
+                        .restartContainerCmd(dorisContainer.getContainerId())) {
             restartCmd.exec();
             LOG.info("Restart command executed, waiting for container services to be ready");
             waitForContainerRunning();
@@ -172,7 +175,7 @@ public class DorisContainer implements ContainerService {
         try {
             Awaitility.await("FE HTTP Service")
                     .atMost(5, TimeUnit.MINUTES)
-                    .pollInterval(5, TimeUnit.SECONDS)
+                    .pollInterval(1, TimeUnit.SECONDS)
                     .until(
                             () -> {
                                 try {
@@ -203,7 +206,7 @@ public class DorisContainer implements ContainerService {
 
             Awaitility.await("BE HTTP Service")
                     .atMost(5, TimeUnit.MINUTES)
-                    .pollInterval(5, TimeUnit.SECONDS)
+                    .pollInterval(1, TimeUnit.SECONDS)
                     .until(
                             () -> {
                                 try {
@@ -298,12 +301,11 @@ public class DorisContainer implements ContainerService {
     }
 
     public void close() {
-        if (dorisContainer != null){
+        if (dorisContainer != null) {
             LOG.info("Doris container is about to be close.");
             dorisContainer.close();
             LOG.info("Doris container closed successfully.");
         }
-
     }
 
     private void initializeJDBCDriver() throws MalformedURLException {
@@ -369,12 +371,12 @@ public class DorisContainer implements ContainerService {
             reader.close();
             p.destroy();
         } catch (Exception e) {
-            e.printStackTrace();
+            LOG.error("Execute command failed.", e);
         }
     }
 
     private List<Map<String, Object>> convertList(ResultSet rs) throws SQLException {
-        List<Map<String,Object>> list = new ArrayList<>();
+        List<Map<String, Object>> list = new ArrayList<>();
         ResultSetMetaData metaData = rs.getMetaData();
         int columnCount = metaData.getColumnCount();
         while (rs.next()) {
