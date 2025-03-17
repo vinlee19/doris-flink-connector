@@ -23,7 +23,7 @@ on:
 
 jobs:
   build-extension:
-    name: "Build Connector (Flink ${{ matrix.flink.version }}, Java ${{ matrix.java-version }})"
+    name: "Build Connector"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,16 +47,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.java-version }}
-
-      - name: Cache Maven Repository
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-java${{ matrix.java-version }}-flink${{ matrix.flink.minor }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-maven-java${{ matrix.java-version }}-flink${{ matrix.flink.minor }}-
-            ${{ runner.os }}-maven-java${{ matrix.java-version }}-
-            ${{ runner.os }}-maven-
 
       - name: Build Flink Connector
         run: |
