@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -250,10 +251,15 @@ public class DatabaseSyncTest {
         String sqlServerJdbcUrlTemplate =
                 sqlServerDatabaseSync.getJdbcUrlTemplate(
                         sqlServerJdbcTemplate, sqlServerJdbcProperties);
-        Assert.assertEquals(
-                sqlServerJdbcTemplate + "encrypt=false;integratedSecurity=false;",
-                sqlServerJdbcUrlTemplate);
-
+        String sqlServerParamsString =
+                sqlServerJdbcUrlTemplate.substring(sqlServerJdbcTemplate.length());
+        Set<String> sqlServerActualParams =
+                Arrays.stream(sqlServerParamsString.split(";"))
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toSet());
+        Set<String> sqlServerExpectedParams =
+                new HashSet<>(Arrays.asList("encrypt=false", "integratedSecurity=false"));
+        Assert.assertEquals(sqlServerActualParams, sqlServerExpectedParams);
         Properties db2JdbcProperties = db2DatabaseSync.getJdbcProperties();
         Assert.assertEquals(3, db2JdbcProperties.size());
         Assert.assertEquals("false", db2JdbcProperties.getProperty("ssl"));
@@ -261,9 +267,19 @@ public class DatabaseSyncTest {
         Assert.assertEquals("1", db2JdbcProperties.getProperty("resultSetHoldability"));
         String db2JdbcUrlTemplate =
                 db2DatabaseSync.getJdbcUrlTemplate(db2JdbcTemplate, db2JdbcProperties);
-        Assert.assertEquals(
-                db2JdbcTemplate
-                        + ":allowNextOnExhaustedResultSet=1;ssl=false;resultSetHoldability=1;",
-                db2JdbcUrlTemplate);
+        String db2ParamsString = db2JdbcUrlTemplate.substring(db2JdbcTemplate.length() + 1);
+        Set<String> db2ActualParams =
+                Arrays.stream(db2ParamsString.split(";"))
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toSet());
+
+        Set<String> db2ExpectedParams =
+                new HashSet<>(
+                        Arrays.asList(
+                                "allowNextOnExhaustedResultSet=1",
+                                "ssl=false",
+                                "resultSetHoldability=1"));
+
+        Assert.assertEquals(db2ExpectedParams, db2ActualParams);
     }
 }
