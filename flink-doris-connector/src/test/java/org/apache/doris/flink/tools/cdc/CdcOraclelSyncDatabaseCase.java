@@ -37,16 +37,16 @@ public class CdcOraclelSyncDatabaseCase {
         env.disableOperatorChaining();
         env.enableCheckpointing(10000);
 
-        String database = "db1";
+        String database = "epo_ddl";
         String tablePrefix = "";
         String tableSuffix = "";
         Map<String, String> sourceConfig = new HashMap<>();
-        sourceConfig.put(OracleSourceOptions.DATABASE_NAME.key(), "XE");
-        sourceConfig.put(OracleSourceOptions.SCHEMA_NAME.key(), "ADMIN");
-        sourceConfig.put(OracleSourceOptions.HOSTNAME.key(), "127.0.0.1");
-        sourceConfig.put(OracleSourceOptions.PORT.key(), "1521");
-        sourceConfig.put(OracleSourceOptions.USERNAME.key(), "admin");
-        sourceConfig.put(OracleSourceOptions.PASSWORD.key(), "");
+        sourceConfig.put(OracleSourceOptions.DATABASE_NAME.key(), "helowin");
+        sourceConfig.put(OracleSourceOptions.SCHEMA_NAME.key(), "DORIS_TEST");
+        sourceConfig.put(OracleSourceOptions.HOSTNAME.key(), "172.21.16.12");
+        sourceConfig.put(OracleSourceOptions.PORT.key(), "21521");
+        sourceConfig.put(OracleSourceOptions.USERNAME.key(), "doris_test");
+        sourceConfig.put(OracleSourceOptions.PASSWORD.key(), "doristest123456");
         // sourceConfig.put("debezium.database.tablename.case.insensitive","false");
         sourceConfig.put("debezium.log.mining.strategy", "online_catalog");
         sourceConfig.put("debezium.log.mining.continuous.mine", "true");
@@ -54,20 +54,20 @@ public class CdcOraclelSyncDatabaseCase {
         Configuration config = Configuration.fromMap(sourceConfig);
 
         Map<String, String> sinkConfig = new HashMap<>();
-        sinkConfig.put(DorisConfigOptions.FENODES.key(), "10.20.30.1:8030");
+        sinkConfig.put(DorisConfigOptions.FENODES.key(), "172.21.16.12:28030");
         sinkConfig.put(DorisConfigOptions.USERNAME.key(), "root");
-        sinkConfig.put(DorisConfigOptions.PASSWORD.key(), "");
-        sinkConfig.put(DorisConfigOptions.JDBC_URL.key(), "jdbc:mysql://10.20.30.1:9030");
+        sinkConfig.put(DorisConfigOptions.PASSWORD.key(), "123456");
+        sinkConfig.put(DorisConfigOptions.JDBC_URL.key(), "jdbc:mysql://172.21.16.12:29030");
         sinkConfig.put(DorisConfigOptions.SINK_LABEL_PREFIX.key(), UUID.randomUUID().toString());
         Configuration sinkConf = Configuration.fromMap(sinkConfig);
 
         Map<String, String> tableConfig = new HashMap<>();
         tableConfig.put(DorisTableConfig.REPLICATION_NUM, "1");
-        tableConfig.put(DorisTableConfig.TABLE_BUCKETS, "tbl1:10,tbl2:20,a.*:30,b.*:40,.*:50");
-        String includingTables = "a_.*|b_.*|c";
+        tableConfig.put(DorisTableConfig.TABLE_BUCKETS, ".*:16");
+        String includingTables = ".*";
         String excludingTables = "";
-        String multiToOneOrigin = "a_.*|b_.*";
-        String multiToOneTarget = "a|b";
+        String multiToOneOrigin = "";
+        String multiToOneTarget = "";
         boolean ignoreDefaultValue = false;
         boolean useNewSchemaChange = true;
         boolean ignoreIncompatible = false;
@@ -88,6 +88,7 @@ public class CdcOraclelSyncDatabaseCase {
                 .setCreateTableOnly(false)
                 .setNewSchemaChange(useNewSchemaChange)
                 .setIgnoreIncompatible(ignoreIncompatible)
+                .setCreateTableOnly(true)
                 .create();
         databaseSync.build();
         env.execute(String.format("Oracle-Doris Database Sync: %s", database));
