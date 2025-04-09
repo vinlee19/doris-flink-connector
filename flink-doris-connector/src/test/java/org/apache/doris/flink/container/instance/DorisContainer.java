@@ -263,8 +263,6 @@ public class DorisContainer implements ContainerService {
     private void waitDorisFeRunning() {
         LOG.info("Waiting for Doris services to be accessible...");
 
-        // Poll Doris FE HTTP service every second with a maximum wait time of 5 minutes
-        // If the service is not available within this time, a timeout exception will be thrown
         try {
             Awaitility.await("FE HTTP Service")
                     .atMost(5, TimeUnit.MINUTES)
@@ -282,22 +280,50 @@ public class DorisContainer implements ContainerService {
                                                     "%{http_code}",
                                                     "-m",
                                                     "2",
-                                                    "http://localhost:" + FE.HTTP_PORT);
+                                                    "http://localhost:8030");
                                     boolean ready = result.getStdout().equals("200");
-                                    LOG.info(
-                                            "FE HTTP service on port {} is ready: {}",
-                                            FE.HTTP_PORT,
-                                            ready);
-
+                                    LOG.info("FE HTTP service on port 8030 is ready: {}", ready);
                                     if (ready) {
-                                        LOG.info(
-                                                "FE HTTP service on port {} is ready",
-                                                FE.HTTP_PORT);
+                                        LOG.info("FE HTTP service on port 8030 is ready");
                                     }
                                     return ready;
                                 } catch (Exception e) {
                                     LOG.debug(
                                             "Exception while checking FE HTTP service: {}",
+                                            e.getMessage());
+                                    return false;
+                                }
+                            });
+
+            Awaitility.await("BE HTTP Service")
+                    .atMost(5, TimeUnit.MINUTES)
+                    .pollInterval(1, TimeUnit.SECONDS)
+                    .until(
+                            () -> {
+                                try {
+                                    ExecResult result =
+                                            dorisContainer.execInContainer(
+                                                    "curl",
+                                                    "-s",
+                                                    "-o",
+                                                    "/dev/null",
+                                                    "-w",
+                                                    "%{http_code}",
+                                                    "-m",
+                                                    "2",
+                                                    "http://localhost:8040");
+                                    boolean ready = "200".equals(result.getStdout().trim());
+                                    if (ready) {
+                                        LOG.info("BE HTTP service on port 8040 is ready");
+                                    } else {
+                                        LOG.debug(
+                                                "BE HTTP service on port 8040 not ready yet, HTTP status: {}",
+                                                result.getStdout().trim());
+                                    }
+                                    return ready;
+                                } catch (Exception e) {
+                                    LOG.debug(
+                                            "Exception while checking BE HTTP service: {}",
                                             e.getMessage());
                                     return false;
                                 }
