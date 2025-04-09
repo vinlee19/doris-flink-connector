@@ -18,24 +18,27 @@
 package org.apache.doris.flink.tools.cdc.hana;
 
 import org.apache.doris.flink.tools.cdc.JdbcSourceSchema;
-import org.apache.doris.flink.tools.cdc.mysql.MysqlType;
 
 import java.sql.DatabaseMetaData;
 
 public class HanaSchema extends JdbcSourceSchema {
 
     public HanaSchema(
-            DatabaseMetaData metaData, String databaseName, String tableName, String tableComment)
+            DatabaseMetaData metaData,
+            String databaseName,
+            String schemaName,
+            String tableName,
+            String tableComment)
             throws Exception {
-        super(metaData, databaseName, null, tableName, tableComment);
+        super(metaData, databaseName, schemaName, tableName, tableComment);
     }
 
     public String convertToDorisType(String fieldType, Integer precision, Integer scale) {
-        return MysqlType.toDorisType(fieldType, precision, scale);
+        return HanaType.toDorisType(fieldType, precision, scale);
     }
 
     @Override
     public String getCdcTableName() {
-        return databaseName + "\\." + tableName;
+        return schemaName + "\\." + tableName;
     }
 }

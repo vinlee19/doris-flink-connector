@@ -25,6 +25,7 @@ public class DatabaseSyncConfig {
     public static final String SQLSERVER_SYNC_DATABASE = "sqlserver-sync-database";
     public static final String MONGODB_SYNC_DATABASE = "mongodb-sync-database";
     public static final String DB2_SYNC_DATABASE = "db2-sync-database";
+    public static final String SAP_HANA_SYNC_DATABASE = "saphana-sync-database";
 
     public static final String MYSQL_CONF = "mysql-conf";
     public static final String ORACLE_CONF = "oracle-conf";
@@ -32,6 +33,7 @@ public class DatabaseSyncConfig {
     public static final String SQLSERVER_CONF = "sqlserver-conf";
     public static final String MONGODB_CONF = "mongodb-conf";
     public static final String DB2_CONF = "db2-conf";
+    public static final String SAPHANA_CONF = "saphana-conf";
 
     ///////////// source-conf ////////
     public static final String DATABASE_NAME = "database-name";
