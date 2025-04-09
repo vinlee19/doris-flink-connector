@@ -22,6 +22,7 @@ import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
+import org.apache.commons.codec.binary.Base64;
 import org.apache.doris.flink.cfg.DorisExecutionOptions;
 import org.apache.doris.flink.cfg.DorisOptions;
 import org.apache.doris.flink.cfg.DorisReadOptions;
@@ -29,6 +30,12 @@ import org.apache.doris.flink.container.AbstractITCaseService;
 import org.apache.doris.flink.container.ContainerUtils;
 import org.apache.doris.flink.sink.writer.serializer.SimpleStringSerializer;
 import org.apache.doris.flink.utils.MockSource;
+import org.apache.http.HttpHeaders;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -105,7 +112,6 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
         executionBuilder
                 .setLabelPrefix(UUID.randomUUID().toString())
                 .enable2PC()
-                .setCheckInterval(1000)
                 .setBatchMode(batchMode)
                 .setFlushQueueSize(4)
                 .setStreamLoadProp(properties);
@@ -137,15 +143,7 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
         int maxRestart = 5;
         Random random = new Random();
         while (true) {
-            try {
-                // restart may be make query failed
-                result =
-                        ContainerUtils.executeSQLStatement(
-                                getDorisQueryConnection(), LOG, query, 2);
-            } catch (Exception ex) {
-                LOG.error("Failed to query result, cause " + ex.getMessage());
-                continue;
-            }
+            result = ContainerUtils.executeSQLStatement(getDorisQueryConnection(), LOG, query, 2);
 
             if (result.size() >= totalRecords * DEFAULT_PARALLELISM
                     && getFlinkJobStatus(jobClient).equals(JobStatus.FINISHED)) {
@@ -156,21 +154,33 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
             // Wait until write is successful, then trigger error
             if (result.size() > 1 && maxRestart-- >= 0) {
                 // trigger error random
-                int randomSleepSec = random.nextInt(30);
+                int randomSleepMs = random.nextInt(30);
                 if (FaultType.STREAM_LOAD_FAILURE.equals(faultType)) {
                     faultInjectionOpen();
-                    randomSleepSec = randomSleepSec + 20;
-                    LOG.info("Injecting fault, sleep {}s before recover", randomSleepSec);
-                    Thread.sleep(randomSleepSec * 1000);
+                    randomSleepMs = randomSleepMs + 20;
+                    LOG.info("Injecting fault, sleep {}s before recover", randomSleepMs);
+                    Thread.sleep(randomSleepMs * 1000);
                     faultInjectionClear();
                 } else if (FaultType.RESTART_FAILURE.equals(faultType)) {
                     // docker image restart time is about 60s
-                    randomSleepSec = randomSleepSec + 60;
-                    dorisContainerService.restartContainer();
+                    int stabilizationTime = randomSleepMs + 60;
                     LOG.info(
-                            "Restarting doris cluster, sleep {}s before next restart",
-                            randomSleepSec);
-                    Thread.sleep(randomSleepSec * 1000);
+                            "Restarting doris cluster, will wait {} s after restart completes for stabilization",
+                            randomSleepMs);
+
+                    dorisContainerService.restartContainer();
+                    LOG.info("Doris container restart completed, waiting for system stabilization");
+                    Awaitility.await("Post-restart stabilization")
+                            .pollInterval(1, TimeUnit.SECONDS)
+                            .pollDelay(Duration.ofSeconds(randomSleepMs))
+                            .atMost(Duration.ofSeconds(stabilizationTime + 10))
+                            .until(
+                                    () -> {
+                                        LOG.debug("System stabilization in progress...");
+                                        return true;
+                                    });
+
+                    LOG.info("System stabilization period completed after container restart");
                 }
             } else {
                 // Avoid frequent queries
@@ -190,10 +200,59 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
         } else {
             List<String> actualResult =
                     ContainerUtils.getResult(getDorisQueryConnection(), LOG, expected, query, 2);
-            LOG.info("actual size: {}, expected size: {}", actualResult.size(), expected.size());
             Assert.assertTrue(
                     actualResult.size() >= expected.size() && actualResult.containsAll(expected));
         }
+    }
+
+    public void faultInjectionOpen() throws IOException {
+        String pointName = "FlushToken.submit_flush_error";
+        String apiUrl =
+                String.format(
+                        "http://%s/api/debug_point/add/%s",
+                        dorisContainerService.getBenodes(), pointName);
+        HttpPost httpPost = new HttpPost(apiUrl);
+        httpPost.addHeader(
+                HttpHeaders.AUTHORIZATION,
+                auth(dorisContainerService.getUsername(), dorisContainerService.getPassword()));
+        try (CloseableHttpClient httpClient = HttpClients.custom().build()) {
+            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+                int statusCode = response.getStatusLine().getStatusCode();
+                String reason = response.getStatusLine().toString();
+                if (statusCode == 200 && response.getEntity() != null) {
+                    LOG.info("Debug point response {}", EntityUtils.toString(response.getEntity()));
+                } else {
+                    LOG.info("Debug point failed, statusCode: {}, reason: {}", statusCode, reason);
+                }
+            }
+        }
+    }
+
+    public void faultInjectionClear() throws IOException {
+        String apiUrl =
+                String.format(
+                        "http://%s/api/debug_point/clear", dorisContainerService.getBenodes());
+        HttpPost httpPost = new HttpPost(apiUrl);
+        httpPost.addHeader(
+                HttpHeaders.AUTHORIZATION,
+                auth(dorisContainerService.getUsername(), dorisContainerService.getPassword()));
+        try (CloseableHttpClient httpClient = HttpClients.custom().build()) {
+            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+                int statusCode = response.getStatusLine().getStatusCode();
+                String reason = response.getStatusLine().toString();
+                if (statusCode == 200 && response.getEntity() != null) {
+                    LOG.info("Debug point response {}", EntityUtils.toString(response.getEntity()));
+                } else {
+                    LOG.info("Debug point failed, statusCode: {}, reason: {}", statusCode, reason);
+                }
+            }
+        }
+    }
+
+    private String auth(String user, String password) {
+        final String authInfo = user + ":" + password;
+        byte[] encoded = Base64.encodeBase64(authInfo.getBytes(StandardCharsets.UTF_8));
+        return "Basic " + new String(encoded);
     }
 
     private void initializeTable(String table) {
@@ -211,5 +270,11 @@ public class DorisSinkFailoverITCase extends AbstractITCaseService {
                                 + "\"replication_num\" = \"1\"\n"
                                 + ")\n",
                         DATABASE, table));
+    }
+
+    enum FaultType {
+        RESTART_FAILURE,
+        STREAM_LOAD_FAILURE,
+        CHECKPOINT_FAILURE
     }
 }
