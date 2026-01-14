@@ -93,6 +93,7 @@ under the License.
         <hamcrest.version>1.3</hamcrest.version>
         <jsqlparser.version>4.9</jsqlparser.version>
         <mysql.driver.version>8.0.26</mysql.driver.version>
+        <sap.hana.driver.version>2.24.7</sap.hana.driver.version>
         <ojdbc.version>19.3.0.0</ojdbc.version>
         <log4j.version>2.17.1</log4j.version>
         <arrow.version>15.0.2</arrow.version>
@@ -355,6 +356,14 @@ under the License.
             <artifactId>ojdbc8</artifactId>
             <version>${ojdbc.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- sap hana jdbc driver -->
+        <!-- https://mvnrepository.com/artifact/com.sap.cloud.db.jdbc/ngdbc -->
+        <dependency>
+            <groupId>com.sap.cloud.db.jdbc</groupId>
+            <artifactId>ngdbc</artifactId>
+            <version>${sap.hana.driver.version}</version>
+            <scope>test</scope>
         </dependency>
         <!-- flink cdc end -->
         <dependency>

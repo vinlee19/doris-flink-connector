@@ -17,18 +17,18 @@
 
 package org.apache.doris.flink.tools.cdc;
 
-import org.apache.flink.cdc.connectors.oracle.source.config.OracleSourceOptions;
+import org.apache.flink.cdc.connectors.base.options.JdbcSourceOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
 import org.apache.doris.flink.table.DorisConfigOptions;
-import org.apache.doris.flink.tools.cdc.oracle.OracleDatabaseSync;
+import org.apache.doris.flink.tools.cdc.hana.HanaDatabaseSync;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-public class CdcOraclelSyncDatabaseCase {
+public class CdcSapHanaDatabaseCase {
 
     public static void main(String[] args) throws Exception {
 
@@ -37,20 +37,23 @@ public class CdcOraclelSyncDatabaseCase {
         env.disableOperatorChaining();
         env.enableCheckpointing(10000);
 
-        String database = "epo_ddl";
+        String database = "saphana_cdc";
         String tablePrefix = "";
         String tableSuffix = "";
         Map<String, String> sourceConfig = new HashMap<>();
-        sourceConfig.put(OracleSourceOptions.DATABASE_NAME.key(), "helowin");
-        sourceConfig.put(OracleSourceOptions.SCHEMA_NAME.key(), "DORIS_TEST");
-        sourceConfig.put(OracleSourceOptions.HOSTNAME.key(), "172.21.16.12");
-        sourceConfig.put(OracleSourceOptions.PORT.key(), "21521");
-        sourceConfig.put(OracleSourceOptions.USERNAME.key(), "doris_test");
-        sourceConfig.put(OracleSourceOptions.PASSWORD.key(), "doristest123456");
+        sourceConfig.put(JdbcSourceOptions.DATABASE_NAME.key(), "SYSTEMDB");
+        sourceConfig.put(JdbcSourceOptions.SCHEMA_NAME.key(), "epo_test");
+        sourceConfig.put(JdbcSourceOptions.HOSTNAME.key(), "172.21.16.12");
+        sourceConfig.put(DatabaseSyncConfig.PORT, "39017");
+        sourceConfig.put(JdbcSourceOptions.USERNAME.key(), "SYSTEM");
+        sourceConfig.put(JdbcSourceOptions.PASSWORD.key(), "Doris123456");
+        // add jdbc properties configuration
+        // sourceConfig.put("jdbc.properties.encrypt", "false");
+        // sourceConfig.put("jdbc.properties.integratedSecurity", "false");
         // sourceConfig.put("debezium.database.tablename.case.insensitive","false");
-        sourceConfig.put("debezium.log.mining.strategy", "online_catalog");
-        sourceConfig.put("debezium.log.mining.continuous.mine", "true");
-        sourceConfig.put("debezium.database.history.store.only.captured.tables.ddl", "true");
+        // sourceConfig.put("scan.incremental.snapshot.enabled","true");
+        // sourceConfig.put("debezium.include.schema.changes","false");
+
         Configuration config = Configuration.fromMap(sourceConfig);
 
         Map<String, String> sinkConfig = new HashMap<>();
@@ -63,7 +66,7 @@ public class CdcOraclelSyncDatabaseCase {
 
         Map<String, String> tableConfig = new HashMap<>();
         tableConfig.put(DorisTableConfig.REPLICATION_NUM, "1");
-        tableConfig.put(DorisTableConfig.TABLE_BUCKETS, ".*:16");
+        tableConfig.put(DorisTableConfig.TABLE_BUCKETS, "tbl1:10,tbl2:20,a.*:30,b.*:40,.*:50");
         String includingTables = ".*";
         String excludingTables = "";
         String multiToOneOrigin = "";
@@ -71,7 +74,7 @@ public class CdcOraclelSyncDatabaseCase {
         boolean ignoreDefaultValue = false;
         boolean useNewSchemaChange = true;
         boolean ignoreIncompatible = false;
-        DatabaseSync databaseSync = new OracleDatabaseSync();
+        DatabaseSync databaseSync = new HanaDatabaseSync();
         databaseSync
                 .setEnv(env)
                 .setDatabase(database)
@@ -85,12 +88,11 @@ public class CdcOraclelSyncDatabaseCase {
                 .setIgnoreDefaultValue(ignoreDefaultValue)
                 .setSinkConfig(sinkConf)
                 .setTableConfig(tableConfig)
-                .setCreateTableOnly(false)
+                .setCreateTableOnly(true)
                 .setNewSchemaChange(useNewSchemaChange)
                 .setIgnoreIncompatible(ignoreIncompatible)
-                .setCreateTableOnly(true)
                 .create();
         databaseSync.build();
-        env.execute(String.format("Oracle-Doris Database Sync: %s", database));
+        env.execute(String.format("SqlServer-Doris Database Sync: %s", database));
     }
 }

@@ -15,24 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.flink.tools.cdc;
+package org.apache.doris.flink.tools.cdc.hana;
 
-public enum SourceConnector {
-    MYSQL("mysql"),
-    ORACLE("oracle"),
-    POSTGRES("postgres"),
-    SQLSERVER("sqlserver"),
-    MONGODB("mongodb"),
-    DB2("db2"),
-    SAPHANA("saphana");
+import org.apache.doris.flink.tools.cdc.JdbcSourceSchema;
 
-    public final String connectorName;
+import java.sql.DatabaseMetaData;
 
-    SourceConnector(String connectorName) {
-        this.connectorName = connectorName;
+public class HanaSchema extends JdbcSourceSchema {
+
+    public HanaSchema(
+            DatabaseMetaData metaData,
+            String databaseName,
+            String schemaName,
+            String tableName,
+            String tableComment)
+            throws Exception {
+        super(metaData, databaseName, schemaName, tableName, tableComment);
     }
 
-    public String getConnectorName() {
-        return connectorName;
+    public String convertToDorisType(String fieldType, Integer precision, Integer scale) {
+        return HanaType.toDorisType(fieldType, precision, scale);
+    }
+
+    @Override
+    public String getCdcTableName() {
+        return schemaName + "\\." + tableName;
     }
 }

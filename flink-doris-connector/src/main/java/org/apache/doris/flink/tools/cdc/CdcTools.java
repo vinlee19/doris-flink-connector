@@ -26,6 +26,7 @@ import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
 import org.apache.doris.flink.tools.cdc.db2.Db2DatabaseSync;
+import org.apache.doris.flink.tools.cdc.hana.HanaDatabaseSync;
 import org.apache.doris.flink.tools.cdc.mongodb.MongoDBDatabaseSync;
 import org.apache.doris.flink.tools.cdc.mysql.MysqlDatabaseSync;
 import org.apache.doris.flink.tools.cdc.oracle.OracleDatabaseSync;
@@ -69,6 +70,9 @@ public class CdcTools {
                 break;
             case DatabaseSyncConfig.DB2_SYNC_DATABASE:
                 createDb2SyncDatabase(params);
+                break;
+            case DatabaseSyncConfig.SAP_HANA_SYNC_DATABASE:
+                createSapHanaSyncDatabase(params);
                 break;
             default:
                 System.out.println("Unknown operation " + operation);
@@ -122,6 +126,14 @@ public class CdcTools {
         Configuration db2Config = Configuration.fromMap(db2Map);
         DatabaseSync databaseSync = new Db2DatabaseSync();
         syncDatabase(params, databaseSync, db2Config, SourceConnector.DB2);
+    }
+
+    private static void createSapHanaSyncDatabase(MultipleParameterTool params) throws Exception {
+        Preconditions.checkArgument(params.has(DatabaseSyncConfig.SAPHANA_CONF));
+        Map<String, String> db2Map = getConfigMap(params, DatabaseSyncConfig.SAPHANA_CONF);
+        Configuration db2Config = Configuration.fromMap(db2Map);
+        DatabaseSync databaseSync = new HanaDatabaseSync();
+        syncDatabase(params, databaseSync, db2Config, SourceConnector.SAPHANA);
     }
 
     private static void syncDatabase(

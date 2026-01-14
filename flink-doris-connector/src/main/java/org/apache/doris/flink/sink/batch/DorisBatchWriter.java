@@ -60,7 +60,7 @@ public class DorisBatchWriter<IN>
     private transient volatile Exception flushException = null;
     private String database;
     private String table;
-    private int subtaskId;
+    private final int subtaskId;
 
     public DorisBatchWriter(
             Sink.InitContext initContext,
